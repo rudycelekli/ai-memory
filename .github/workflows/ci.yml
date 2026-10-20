@@ -1,366 +1,68 @@
-name: Candidate qualification
-on:
-  workflow_dispatch:
-    inputs:
-      candidate:
-        type: choice
-        required: true
-        options: [markdown, atomic-download, percent-destination]
-      base:
-        type: string
-        required: true
-        default: "3334785675d8e56349107f68aef48a3ecbf4ada9"
-      patch_base64:
-        type: string
-        required: true
-      patch_sha256:
-        type: string
-        required: true
-      tests_patch_base64:
-        type: string
-        required: true
-      tests_patch_sha256:
-        type: string
-        required: true
+name: dotted PATHEXT native reproduction
+'on':
+  workflow_dispatch: {}
 permissions:
   contents: read
-concurrency:
-  group: ai-memory-qualification-${{ inputs.candidate }}
-  cancel-in-progress: false
-env:
-  CARGO_BUILD_JOBS: "2"
-  CARGO_TERM_COLOR: never
-  RUST_BACKTRACE: "1"
-  TAILWIND_BUILD: "1"
 jobs:
   baseline:
-    if: github.repository == 'rudycelekli/ai-memory'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+    runs-on: windows-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: akitaonrails/ai-memory
-          ref: 3334785675d8e56349107f68aef48a3ecbf4ada9
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
-        with:
-          toolchain: "1.95"
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
-        with:
-          shared-key: ai-native-1.95
-      - name: Verify frozen base, reviewed paths and patch digest; apply working tree only
-        env:
-          CANDIDATE: ${{ inputs.candidate }}
-          MODE: baseline
-          BASE: ${{ inputs.base }}
-          PATCH_BASE64: ${{ inputs.patch_base64 }}
-          PATCH_SHA256: ${{ inputs.patch_sha256 }}
-          TESTS_PATCH_BASE64: ${{ inputs.tests_patch_base64 }}
-          TESTS_PATCH_SHA256: ${{ inputs.tests_patch_sha256 }}
-        run: |
-          python3 - <<'PY'
-          import base64,hashlib,json,os,pathlib,subprocess
-          EXPECTED = {'markdown': {'base': '3334785675d8e56349107f68aef48a3ecbf4ada9', 'paths': ['CHANGELOG.md', 'crates/ai-memory-mcp/src/admin.rs', 'crates/ai-memory-wiki/src/markdown.rs', 'docs/okf.md'], 'tests_paths': ['crates/ai-memory-mcp/src/admin.rs', 'crates/ai-memory-wiki/src/markdown.rs'], 'candidate_sha256': '9db73303882188edef8fecc8c1b94a96d706ac9eda7110ba90718c809199f75d', 'tests_sha256': 'f955747f2efe1672a03aff99a9c3b53b2ab3581e1d46cfc89e52b96c6dce08ff', 'candidate_bytes': 9292, 'tests_bytes': 4973}, 'atomic-download': {'base': '3334785675d8e56349107f68aef48a3ecbf4ada9', 'paths': ['CHANGELOG.md', 'crates/ai-memory-cli/src/http_client.rs', 'crates/ai-memory-cli/tests/suite/main.rs', 'docs/okf.md', 'crates/ai-memory-cli/tests/suite/backup_download.rs'], 'tests_paths': ['crates/ai-memory-cli/tests/suite/main.rs', 'crates/ai-memory-cli/tests/suite/backup_download.rs'], 'candidate_sha256': '8c984e29c5c6c561708d720f48e92de66eaba9bd1edf0eb705df228902139560', 'tests_sha256': '756fbf69a8f122062e1f42d21510bbc05e99cf7fcb10664e9e40ab0f4718d5f4', 'candidate_bytes': 19968, 'tests_bytes': 11317}, 'percent-destination': {'base': '3334785675d8e56349107f68aef48a3ecbf4ada9', 'paths': ['CHANGELOG.md', 'crates/ai-memory-web/src/markdown.rs', 'crates/ai-memory-web/tests/suite/routes.rs', 'crates/ai-memory-wiki/src/lib.rs', 'crates/ai-memory-wiki/src/markdown.rs', 'docs/okf.md', 'docs/security-boundaries.md'], 'tests_paths': ['crates/ai-memory-web/src/markdown.rs', 'crates/ai-memory-web/tests/suite/routes.rs', 'crates/ai-memory-wiki/src/markdown.rs'], 'candidate_sha256': 'ba6322de285c2ed68d78a77c765c2e3c8d6f5feaae17ca9a87a7b6e175dc97b8', 'tests_sha256': '456e98a69c75512069a7bf477bb7d796bfd2475313e96b510dcce5d2a10047a4', 'candidate_bytes': 27673, 'tests_bytes': 8759}}
-          name=os.environ['CANDIDATE']; mode=os.environ['MODE']; expected=EXPECTED[name]
-          assert os.environ['BASE']==expected['base'], 'base input mismatch'
-          head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
-          assert head==expected['base'], 'checkout revision mismatch'
-          assert not subprocess.check_output(['git','status','--porcelain'],text=True).strip(), 'checkout not clean'
-          key='tests_sha256' if mode=='baseline' else 'candidate_sha256'
-          supplied=os.environ['TESTS_PATCH_SHA256' if mode=='baseline' else 'PATCH_SHA256']
-          encoded=os.environ['TESTS_PATCH_BASE64' if mode=='baseline' else 'PATCH_BASE64']
-          assert supplied==expected[key], 'unreviewed patch digest'
-          patch=base64.b64decode(encoded,validate=True)
-          assert len(patch)<=65536 and hashlib.sha256(patch).hexdigest()==expected[key], 'patch integrity mismatch'
-          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'ai-memory-qualification';root.mkdir(exist_ok=True)
-          f=root/'applied.patch';f.write_bytes(patch)
-          stat=subprocess.check_output(['git','apply','--numstat',str(f)],text=True)
-          paths=[line.split('\t',2)[2]for line in stat.splitlines()]
-          allowed=expected['tests_paths' if mode=='baseline' else 'paths']
-          assert paths and len(paths)==len(set(paths))and set(paths)==set(allowed), 'path allowlist mismatch'
-          assert all(not pathlib.PurePosixPath(p).is_absolute()and '..'not in pathlib.PurePosixPath(p).parts for p in paths)
-          subprocess.run(['git','apply','--check',str(f)],check=True)
-          subprocess.run(['git','apply',str(f)],check=True)
-          subprocess.run(['git','diff','--check'],check=True)
-          metadata={'candidate':name,'mode':mode,'base':head,'patch_sha256':expected[key],'paths':paths,'source_commit_pushed':False,'platform':'ubuntu-latest','rust':'1.95','workflow_commit':os.environ['GITHUB_SHA']}
-          (root/'metadata.json').write_text(json.dumps(metadata,indent=2)+'\n')
-          print(json.dumps(metadata))
-          PY
-      - name: Record native compiler and resource budget
-        run: |
-          rustc --version
-          cargo --version
-          rustc --version | grep '^rustc 1.95.'
-          df -h .
-      - name: Require actual baseline regression assertions (compile errors do not count)
-        env:
-          CANDIDATE: ${{ inputs.candidate }}
-        run: |
-          python3 - <<'PY'
-          import json,os,pathlib,subprocess
-          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'ai-memory-qualification'
-          name=os.environ['CANDIDATE']
-          child_env={key:value for key,value in os.environ.items()if key not in {'GITHUB_TOKEN','GH_TOKEN'}and not key.startswith(('OPENAI_','ANTHROPIC_','AWS_','AZURE_','GOOGLE_','GEMINI_','AI_MEMORY_'))}
-          checks={
-          'markdown':[
-           ['cargo','test','--locked','-p','ai-memory-wiki','extract_links_handles_nested_and_escaped_labels','--','--nocapture'],
-           ['cargo','test','--locked','-p','ai-memory-wiki','export_labels_keep_their_link_when_reindexed','--','--nocapture'],
-           ['cargo','test','--locked','-p','ai-memory-mcp','export_okf_labels_preserve_links_when_the_bundle_is_reindexed','--','--nocapture']],
-          'atomic-download':[
-           ['cargo','test','--locked','-p','ai-memory-cli','--test','suite','backup_download::interrupted_archive_download_preserves_previous_output','--','--exact','--nocapture'],
-           ['cargo','test','--locked','-p','ai-memory-cli','--test','suite','backup_download::interrupted_archive_download_leaves_no_partial_output','--','--exact','--nocapture']],
-          'percent-destination':[
-           ['cargo','test','--locked','-p','ai-memory-wiki','markdown_url_paths_decode_once_before_link_resolution','--','--nocapture'],
-           ['cargo','test','--locked','-p','ai-memory-web','markdown_url_destinations_are_decoded_once_before_route_encoding','--','--nocapture'],
-           ['cargo','test','--locked','-p','ai-memory-web','--lib','encoded_markdown_links_resolve_and_remain_in_the_source_scope','--','--nocapture']]}
-          ATOMIC_ASSERTIONS={
-           'backup_download::interrupted_archive_download_preserves_previous_output': 'assertion `left == right` failed',
-           'backup_download::interrupted_archive_download_leaves_no_partial_output': 'failed download must not publish a partial archive',
-          }
-          def validate_baseline_result(candidate,cmd,returncode,log):
-           assert returncode==101, 'baseline must fail with cargo test failure, not success or infrastructure exit'
-           assert 'test result: FAILED' in log and 'panicked at' in log, 'expected native assertion failure missing'
-           assert 'could not compile'not in log and 'error[E'not in log, 'compilation errors are not regression evidence'
-           target=cmd[cmd.index('--')-1]
-           assert target in log, 'requested regression was not reported'
-           if candidate=='atomic-download':
-            assert f"test {target} ... FAILED" in log, 'requested atomic regression did not fail'
-            assert f"thread '{target}'" in log, 'requested atomic regression did not panic'
-            assert ATOMIC_ASSERTIONS[target] in log, 'expected atomic assertion message missing'
-           elif candidate=='percent-destination' and target=='markdown_url_destinations_are_decoded_once_before_route_encoding':
-            assert 'test markdown::tests::'+target+' ... FAILED' in log, 'requested web regression did not fail'
-            assert "thread 'markdown::tests::"+target+"'" in log, 'requested web regression did not panic'
-            assert '<p><a href="w/default/scratch/p/notes/my%2520note.md#part">' in log, 'expected double-encoded output missing'
-           else:
-            assert 'assertion' in log, 'expected native assertion failure missing'
-           return target
-          results=[]
-          for i,cmd in enumerate(checks[name]):
-           result=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=2100,env=child_env)
-           log=result.stdout;(root/f'baseline-{i}.log').write_text(log);print(log)
-           target=validate_baseline_result(name,cmd,result.returncode,log)
-           results.append({'command':cmd,'exit':result.returncode,'assertion_failure':True})
-          (root/'baseline-results.json').write_text(json.dumps(results,indent=2)+'\n')
-          PY
-      - name: Preserve native receipts
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: ${{ inputs.candidate }}-baseline-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ai-memory-qualification/
-          if-no-files-found: error
-          retention-days: 14
-  candidate:
-    if: github.repository == 'rudycelekli/ai-memory'
-    needs: baseline
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: akitaonrails/ai-memory
-          ref: 3334785675d8e56349107f68aef48a3ecbf4ada9
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
-        with:
-          toolchain: "1.95"
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
-        with:
-          shared-key: ai-native-1.95
-      - name: Verify frozen base, reviewed paths and patch digest; apply working tree only
-        env:
-          CANDIDATE: ${{ inputs.candidate }}
-          MODE: candidate
-          BASE: ${{ inputs.base }}
-          PATCH_BASE64: ${{ inputs.patch_base64 }}
-          PATCH_SHA256: ${{ inputs.patch_sha256 }}
-          TESTS_PATCH_BASE64: ${{ inputs.tests_patch_base64 }}
-          TESTS_PATCH_SHA256: ${{ inputs.tests_patch_sha256 }}
-        run: |
-          python3 - <<'PY'
-          import base64,hashlib,json,os,pathlib,subprocess
-          EXPECTED = {'markdown': {'base': '3334785675d8e56349107f68aef48a3ecbf4ada9', 'paths': ['CHANGELOG.md', 'crates/ai-memory-mcp/src/admin.rs', 'crates/ai-memory-wiki/src/markdown.rs', 'docs/okf.md'], 'tests_paths': ['crates/ai-memory-mcp/src/admin.rs', 'crates/ai-memory-wiki/src/markdown.rs'], 'candidate_sha256': '9db73303882188edef8fecc8c1b94a96d706ac9eda7110ba90718c809199f75d', 'tests_sha256': 'f955747f2efe1672a03aff99a9c3b53b2ab3581e1d46cfc89e52b96c6dce08ff', 'candidate_bytes': 9292, 'tests_bytes': 4973}, 'atomic-download': {'base': '3334785675d8e56349107f68aef48a3ecbf4ada9', 'paths': ['CHANGELOG.md', 'crates/ai-memory-cli/src/http_client.rs', 'crates/ai-memory-cli/tests/suite/main.rs', 'docs/okf.md', 'crates/ai-memory-cli/tests/suite/backup_download.rs'], 'tests_paths': ['crates/ai-memory-cli/tests/suite/main.rs', 'crates/ai-memory-cli/tests/suite/backup_download.rs'], 'candidate_sha256': '8c984e29c5c6c561708d720f48e92de66eaba9bd1edf0eb705df228902139560', 'tests_sha256': '756fbf69a8f122062e1f42d21510bbc05e99cf7fcb10664e9e40ab0f4718d5f4', 'candidate_bytes': 19968, 'tests_bytes': 11317}, 'percent-destination': {'base': '3334785675d8e56349107f68aef48a3ecbf4ada9', 'paths': ['CHANGELOG.md', 'crates/ai-memory-web/src/markdown.rs', 'crates/ai-memory-web/tests/suite/routes.rs', 'crates/ai-memory-wiki/src/lib.rs', 'crates/ai-memory-wiki/src/markdown.rs', 'docs/okf.md', 'docs/security-boundaries.md'], 'tests_paths': ['crates/ai-memory-web/src/markdown.rs', 'crates/ai-memory-web/tests/suite/routes.rs', 'crates/ai-memory-wiki/src/markdown.rs'], 'candidate_sha256': 'ba6322de285c2ed68d78a77c765c2e3c8d6f5feaae17ca9a87a7b6e175dc97b8', 'tests_sha256': '456e98a69c75512069a7bf477bb7d796bfd2475313e96b510dcce5d2a10047a4', 'candidate_bytes': 27673, 'tests_bytes': 8759}}
-          name=os.environ['CANDIDATE']; mode=os.environ['MODE']; expected=EXPECTED[name]
-          assert os.environ['BASE']==expected['base'], 'base input mismatch'
-          head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
-          assert head==expected['base'], 'checkout revision mismatch'
-          assert not subprocess.check_output(['git','status','--porcelain'],text=True).strip(), 'checkout not clean'
-          key='tests_sha256' if mode=='baseline' else 'candidate_sha256'
-          supplied=os.environ['TESTS_PATCH_SHA256' if mode=='baseline' else 'PATCH_SHA256']
-          encoded=os.environ['TESTS_PATCH_BASE64' if mode=='baseline' else 'PATCH_BASE64']
-          assert supplied==expected[key], 'unreviewed patch digest'
-          patch=base64.b64decode(encoded,validate=True)
-          assert len(patch)<=65536 and hashlib.sha256(patch).hexdigest()==expected[key], 'patch integrity mismatch'
-          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'ai-memory-qualification';root.mkdir(exist_ok=True)
-          f=root/'applied.patch';f.write_bytes(patch)
-          stat=subprocess.check_output(['git','apply','--numstat',str(f)],text=True)
-          paths=[line.split('\t',2)[2]for line in stat.splitlines()]
-          allowed=expected['tests_paths' if mode=='baseline' else 'paths']
-          assert paths and len(paths)==len(set(paths))and set(paths)==set(allowed), 'path allowlist mismatch'
-          assert all(not pathlib.PurePosixPath(p).is_absolute()and '..'not in pathlib.PurePosixPath(p).parts for p in paths)
-          subprocess.run(['git','apply','--check',str(f)],check=True)
-          subprocess.run(['git','apply',str(f)],check=True)
-          subprocess.run(['git','diff','--check'],check=True)
-          metadata={'candidate':name,'mode':mode,'base':head,'patch_sha256':expected[key],'paths':paths,'source_commit_pushed':False,'platform':'ubuntu-latest','rust':'1.95','workflow_commit':os.environ['GITHUB_SHA']}
-          (root/'metadata.json').write_text(json.dumps(metadata,indent=2)+'\n')
-          print(json.dumps(metadata))
-          PY
-      - name: Require exact full-index identity immediately after apply
-        env:
-          EXPECTED_SHA256: ${{ inputs.patch_sha256 }}
-          IDENTITY_PHASE: preflight
-        run: |
-          python3 - <<'PY'
-          import hashlib,json,os,pathlib,stat,subprocess
-          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'ai-memory-qualification';root.mkdir(exist_ok=True)
-          phase=os.environ.get('IDENTITY_PHASE','final')
-          canonical=subprocess.check_output(['git','diff','--binary','--full-index'])
-          untracked=subprocess.check_output(['git','ls-files','--others','--exclude-standard'],text=True).splitlines()
-          for file in untracked:
-           result=subprocess.run(['git','diff','--no-index','--binary','--full-index','--','/dev/null',file],capture_output=True)
-           assert result.returncode==1, 'failed to inspect new file'
-           canonical+=result.stdout
-          (root/(phase+'.patch')).write_bytes(canonical)
-          status=subprocess.check_output(['git','status','--porcelain=v1','-uall'],text=True)
-          (root/(phase+'-status.txt')).write_text(status)
-          paths=subprocess.check_output(['git','diff','--name-only'],text=True).splitlines()+untracked
-          files={}
-          for name in sorted(set(paths)):
-           p=pathlib.Path(name)
-           if not p.exists() and not p.is_symlink(): files[name]={'deleted':True};continue
-           data=os.readlink(p).encode()if p.is_symlink()else p.read_bytes()
-           files[name]={'sha256':hashlib.sha256(data).hexdigest(),'mode':oct(stat.S_IMODE(p.lstat().st_mode)),'bytes':len(data),'symlink':p.is_symlink()}
-          (root/(phase+'-source-files.json')).write_text(json.dumps(files,indent=2)+chr(10))
-          actual=hashlib.sha256(canonical).hexdigest()
-          (root/(phase+'-patch-identity.json')).write_text(json.dumps({'sha256':actual,'expected':os.environ['EXPECTED_SHA256'],'serializer':'git diff --binary --full-index plus untracked no-index binary full-index','including_untracked_files':True},indent=2)+chr(10))
-          subprocess.run(['git','diff','--check'],check=True)
-          assert actual==os.environ['EXPECTED_SHA256'], 'qualification patch identity mismatch; actual patch/status/source hashes retained'
-          print(phase+' reviewed patch SHA-256:',actual)
-          PY
-      - name: Record native compiler and resource budget
-        run: |
-          rustc --version
-          cargo --version
-          rustc --version | grep '^rustc 1.95.'
-          df -h .
-      - name: Formatting
-        env:
-          QUALIFICATION_COMMAND: 'cargo fmt --all -- --check 2>&1 | tee "$RUNNER_TEMP/ai-memory-qualification/formatting.log"'
-        run: |
-          python3 - <<'PY'
-          import os
-          for key in list(os.environ):
-           if key in {'GITHUB_TOKEN','GH_TOKEN'}or key.startswith(('OPENAI_','ANTHROPIC_','AWS_','AZURE_','GOOGLE_','GEMINI_','AI_MEMORY_')):
-            os.environ.pop(key,None)
-          os.execvp('bash',['bash','-euo','pipefail','-c',os.environ['QUALIFICATION_COMMAND']])
-          PY
-      - name: Clippy
-        env:
-          QUALIFICATION_COMMAND: 'cargo clippy --locked --workspace --all-targets -- -D warnings 2>&1 | tee "$RUNNER_TEMP/ai-memory-qualification/clippy.log"'
-        run: |
-          python3 - <<'PY'
-          import os
-          for key in list(os.environ):
-           if key in {'GITHUB_TOKEN','GH_TOKEN'}or key.startswith(('OPENAI_','ANTHROPIC_','AWS_','AZURE_','GOOGLE_','GEMINI_','AI_MEMORY_')):
-            os.environ.pop(key,None)
-          os.execvp('bash',['bash','-euo','pipefail','-c',os.environ['QUALIFICATION_COMMAND']])
-          PY
-      - name: All workspace and target tests
-        env:
-          QUALIFICATION_COMMAND: 'cargo test --locked --workspace --all-targets 2>&1 | tee "$RUNNER_TEMP/ai-memory-qualification/all-workspace-and-target-tests.log"'
-        run: |
-          python3 - <<'PY'
-          import os
-          for key in list(os.environ):
-           if key in {'GITHUB_TOKEN','GH_TOKEN'}or key.startswith(('OPENAI_','ANTHROPIC_','AWS_','AZURE_','GOOGLE_','GEMINI_','AI_MEMORY_')):
-            os.environ.pop(key,None)
-          os.execvp('bash',['bash','-euo','pipefail','-c',os.environ['QUALIFICATION_COMMAND']])
-          PY
-      - name: Doctests
-        env:
-          QUALIFICATION_COMMAND: 'cargo test --locked --workspace --doc 2>&1 | tee "$RUNNER_TEMP/ai-memory-qualification/doctests.log"'
-        run: |
-          python3 - <<'PY'
-          import os
-          for key in list(os.environ):
-           if key in {'GITHUB_TOKEN','GH_TOKEN'}or key.startswith(('OPENAI_','ANTHROPIC_','AWS_','AZURE_','GOOGLE_','GEMINI_','AI_MEMORY_')):
-            os.environ.pop(key,None)
-          os.execvp('bash',['bash','-euo','pipefail','-c',os.environ['QUALIFICATION_COMMAND']])
-          PY
-      - name: Dependency policy
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25
-        with:
-          log-level: warn
-          command: check
-          arguments: --all-features
-      - name: Require native guard-removal failures and restore candidate
-        if: inputs.candidate == 'percent-destination'
-        run: |
-          python3 - <<'PY'
-          import json,os,pathlib,subprocess
-          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'ai-memory-qualification'
-          wiki=pathlib.Path('crates/ai-memory-wiki/src/markdown.rs');web=pathlib.Path('crates/ai-memory-web/src/markdown.rs')
-          wiki_test=['cargo','test','--locked','-p','ai-memory-wiki','decoded_markdown_paths_cannot_escape_or_change_scope','--','--nocapture']
-          web_test=['cargo','test','--locked','-p','ai-memory-web','decoded_markdown_destinations_cannot_change_the_web_scope','--','--nocapture']
-          ws=wiki.read_text();ss=web.read_text();start=ss.index('    if decoded_path.is_empty()');end=ss.index('    let mut path_part =',start)
-          cases=[
-           ('encoded-controls',wiki,'if byte.is_ascii_control() {','if false {',wiki_test),
-           ('invalid-utf8',wiki,'String::from_utf8(decoded).ok().map(std::borrow::Cow::Owned)','Some(std::borrow::Cow::Owned(String::from_utf8_lossy(&decoded).into_owned()))',wiki_test),
-           ('root-traversal',wiki,'parts.pop()?;','parts.pop();',wiki_test),
-           ('decoded-web-guard',web,ss[start:end],'',web_test),
-          ]
-          results=[]
-          child_env={key:value for key,value in os.environ.items()if key not in {'GITHUB_TOKEN','GH_TOKEN'}and not key.startswith(('OPENAI_','ANTHROPIC_','AWS_','AZURE_','GOOGLE_','GEMINI_','AI_MEMORY_'))}
-          for name,file,old,new,cmd in cases:
-           original=file.read_bytes();text=original.decode();assert text.count(old)==1,(name,'mutation is not unique')
-           try:
-            file.write_text(text.replace(old,new,1));r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=300,env=child_env);(root/('bite-'+name+'.log')).write_text(r.stdout);print(r.stdout)
-            assert r.returncode==101 and 'test result: FAILED'in r.stdout and 'panicked at'in r.stdout,'guard removal must fail a native assertion'
-            assert 'could not compile'not in r.stdout and 'error[E'not in r.stdout,'compile failure is not guard evidence'
-            results.append({'guard':name,'exit':r.returncode,'assertion_failure':True,'source':str(file)})
-           finally:file.write_bytes(original)
-          (root/'guard-bites.json').write_text(json.dumps(results,indent=2)+'\n')
-          PY
-      - name: Verify whitespace and final patch identity including new files
-        env:
-          CANDIDATE: ${{ inputs.candidate }}
-          EXPECTED_SHA256: ${{ inputs.patch_sha256 }}
-        run: |
-          python3 - <<'PY'
-          import hashlib,json,os,pathlib,stat,subprocess
-          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'ai-memory-qualification';root.mkdir(exist_ok=True)
-          phase=os.environ.get('IDENTITY_PHASE','final')
-          canonical=subprocess.check_output(['git','diff','--binary','--full-index'])
-          untracked=subprocess.check_output(['git','ls-files','--others','--exclude-standard'],text=True).splitlines()
-          for file in untracked:
-           result=subprocess.run(['git','diff','--no-index','--binary','--full-index','--','/dev/null',file],capture_output=True)
-           assert result.returncode==1, 'failed to inspect new file'
-           canonical+=result.stdout
-          (root/(phase+'.patch')).write_bytes(canonical)
-          status=subprocess.check_output(['git','status','--porcelain=v1','-uall'],text=True)
-          (root/(phase+'-status.txt')).write_text(status)
-          paths=subprocess.check_output(['git','diff','--name-only'],text=True).splitlines()+untracked
-          files={}
-          for name in sorted(set(paths)):
-           p=pathlib.Path(name)
-           if not p.exists() and not p.is_symlink(): files[name]={'deleted':True};continue
-           data=os.readlink(p).encode()if p.is_symlink()else p.read_bytes()
-           files[name]={'sha256':hashlib.sha256(data).hexdigest(),'mode':oct(stat.S_IMODE(p.lstat().st_mode)),'bytes':len(data),'symlink':p.is_symlink()}
-          (root/(phase+'-source-files.json')).write_text(json.dumps(files,indent=2)+chr(10))
-          actual=hashlib.sha256(canonical).hexdigest()
-          (root/(phase+'-patch-identity.json')).write_text(json.dumps({'sha256':actual,'expected':os.environ['EXPECTED_SHA256'],'serializer':'git diff --binary --full-index plus untracked no-index binary full-index','including_untracked_files':True},indent=2)+chr(10))
-          subprocess.run(['git','diff','--check'],check=True)
-          assert actual==os.environ['EXPECTED_SHA256'], 'qualification patch identity mismatch; actual patch/status/source hashes retained'
-          print(phase+' reviewed patch SHA-256:',actual)
-          PY
-      - name: Preserve native receipts
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: ${{ inputs.candidate }}-candidate-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ai-memory-qualification/
-          if-no-files-found: error
-          retention-days: 14
+    - name: Preserve canonical LF source
+      shell: bash
+      run: git config --global core.autocrlf false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: akitaonrails/ai-memory
+        ref: 11ab1003d9ef3788f5fc40b87fff54abf7f17dc0
+    - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      with:
+        toolchain: 1.95.0
+    - name: Exact production resolver launches wrong dotted command
+      shell: bash
+      run: 'python - <<''PY''
+
+        from pathlib import Path
+
+        import base64,hashlib,subprocess,re,json
+
+        source=Path(''crates/ai-memory-cli/src/commands/run.rs'').read_bytes()
+
+        assert hashlib.sha256(source).hexdigest()==''8931da5d37103e3c76b979ae48265eb85b90ee3787392a040c8735e606a5c2ec''
+
+        s=source.decode();a=s.index(''pub(super) fn resolve_program('');z=s.index(''\nfn
+        user_supplied_grok_rules'',a)
+
+        actual=s[a:z].replace(''pub(super) fn resolve_program'',''fn resolve_program'')
+
+        probe=base64.b64decode(''dXNlIHN0ZDo6ZmZpOjpPc1N0cjsKdXNlIHN0ZDo6cGF0aDo6UGF0aDsKc3RydWN0IEV4ZWN1dGFibGVTZWFyY2g8J2E+IHsgcGF0aDogT3B0aW9uPCYnYSBPc1N0cj4sIGV4dGVuc2lvbnM6IE9wdGlvbjwmJ2EgT3NTdHI+IH0KZm4gcmVzb2x2ZV9wcm9ncmFtKAogICAgcHJvZ3JhbTogJk9zU3RyLAogICAgc2VhcmNoOiBFeGVjdXRhYmxlU2VhcmNoPCdfPiwKKSAtPiBPcHRpb248c3RkOjpwYXRoOjpQYXRoQnVmPiB7CiAgICBsZXQgcGF0aCA9IFBhdGg6Om5ldyhwcm9ncmFtKTsKICAgIGlmIHBhdGguY29tcG9uZW50cygpLmNvdW50KCkgPiAxIHsKICAgICAgICByZXR1cm4gcmVzb2x2ZV9jYW5kaWRhdGUocGF0aCwgc2VhcmNoLmV4dGVuc2lvbnMpOwogICAgfQogICAgc2VhcmNoLnBhdGguYW5kX3RoZW4ofHBhdGhfdmFsdWV8IHsKICAgICAgICBzdGQ6OmVudjo6c3BsaXRfcGF0aHMocGF0aF92YWx1ZSkKICAgICAgICAgICAgLmZpbmRfbWFwKHxkaXJ8IHJlc29sdmVfY2FuZGlkYXRlKCZkaXIuam9pbihwYXRoKSwgc2VhcmNoLmV4dGVuc2lvbnMpKQogICAgfSkKfQoKLy8vIENvbmNyZXRlIGxhdW5jaGFibGUgZmlsZSBmb3Igb25lIGNhbmRpZGF0ZSBsb2NhdGlvbi4KZm4gcmVzb2x2ZV9jYW5kaWRhdGUoCiAgICBwYXRoOiAmUGF0aCwKICAgIGV4ZWN1dGFibGVfZXh0ZW5zaW9uczogT3B0aW9uPCZPc1N0cj4sCikgLT4gT3B0aW9uPHN0ZDo6cGF0aDo6UGF0aEJ1Zj4gewogICAgI1tjZmcobm90KHdpbmRvd3MpKV0KICAgIGxldCBfID0gZXhlY3V0YWJsZV9leHRlbnNpb25zOwogICAgI1tjZmcod2luZG93cyldCiAgICB7CiAgICAgICAgLy8gQW4gZXhwbGljaXQgZXh0ZW5zaW9uIGlzIHRha2VuIGF0IGZhY2UgdmFsdWU7IG90aGVyd2lzZSBvbmx5IGEKICAgICAgICAvLyBQQVRIRVhUIG1hdGNoIGNvdW50cy4gTmV2ZXIgdGhlIGV4dGVuc2lvbi1sZXNzIHNpYmxpbmcuCiAgICAgICAgaWYgcGF0aC5leHRlbnNpb24oKS5pc19zb21lKCkgJiYgZXhlY3V0YWJsZV9maWxlKHBhdGgpIHsKICAgICAgICAgICAgcmV0dXJuIFNvbWUocGF0aC50b19wYXRoX2J1ZigpKTsKICAgICAgICB9CiAgICAgICAgbGV0IGV4dGVuc2lvbnMgPSBleGVjdXRhYmxlX2V4dGVuc2lvbnMKICAgICAgICAgICAgLmFuZF90aGVuKE9zU3RyOjp0b19zdHIpCiAgICAgICAgICAgIC51bndyYXBfb3IoIi5DT007LkVYRTsuQkFUOy5DTUQiKTsKICAgICAgICBleHRlbnNpb25zCiAgICAgICAgICAgIC5zcGxpdCgnOycpCiAgICAgICAgICAgIC5maWx0ZXIofGV4dGVuc2lvbnwgIWV4dGVuc2lvbi5pc19lbXB0eSgpKQogICAgICAgICAgICAubWFwKHxleHRlbnNpb258IHBhdGgud2l0aF9leHRlbnNpb24oZXh0ZW5zaW9uLnRyaW1fc3RhcnRfbWF0Y2hlcygnLicpKSkKICAgICAgICAgICAgLmZpbmQofGNhbmRpZGF0ZXwgZXhlY3V0YWJsZV9maWxlKGNhbmRpZGF0ZSkpCiAgICB9CiAgICAjW2NmZyhub3Qod2luZG93cykpXQogICAgewogICAgICAgIGV4ZWN1dGFibGVfZmlsZShwYXRoKS50aGVuKHx8IHBhdGgudG9fcGF0aF9idWYoKSkKICAgIH0KfQoKZm4gZXhlY3V0YWJsZV9maWxlKHBhdGg6ICZQYXRoKSAtPiBib29sIHsKICAgIGxldCBPayhtZXRhZGF0YSkgPSBwYXRoLm1ldGFkYXRhKCkgZWxzZSB7CiAgICAgICAgcmV0dXJuIGZhbHNlOwogICAgfTsKICAgIGlmICFtZXRhZGF0YS5pc19maWxlKCkgewogICAgICAgIHJldHVybiBmYWxzZTsKICAgIH0KICAgICNbY2ZnKHVuaXgpXQogICAgewogICAgICAgIHVzZSBzdGQ6Om9zOjp1bml4Ojpmczo6UGVybWlzc2lvbnNFeHQgYXMgXzsKICAgICAgICBtZXRhZGF0YS5wZXJtaXNzaW9ucygpLm1vZGUoKSAmIDBvMTExICE9IDAKICAgIH0KICAgICNbY2ZnKG5vdCh1bml4KSldCiAgICB7CiAgICAgICAgdHJ1ZQogICAgfQp9CgojW3Rlc3RdCmZuIGRvdHRlZF9oYXJuZXNzX25hbWVfbGF1bmNoZXNfaXRzX293bl9wYXRoZXh0X3NpYmxpbmcoKSB7CiBsZXQgZGlyPXN0ZDo6ZW52Ojp0ZW1wX2RpcigpLmpvaW4oZm9ybWF0ISgiYWktbWVtb3J5LWRvdC1yZXNvbHV0aW9uLXt9IixzdGQ6OnByb2Nlc3M6OmlkKCkpKTsKIHN0ZDo6ZnM6OmNyZWF0ZV9kaXJfYWxsKCZkaXIpLnVud3JhcCgpOwogc3RkOjpmczo6d3JpdGUoZGlyLmpvaW4oImFnZW50LnRvb2wuY21kIiksICJAZWNobyBvZmZcclxuZWNobyBpbnRlbmRlZC1oYXJuZXNzXHJcbiIpLnVud3JhcCgpOwogc3RkOjpmczo6d3JpdGUoZGlyLmpvaW4oImFnZW50LmNtZCIpLCAiQGVjaG8gb2ZmXHJcbmVjaG8gd3JvbmctaGFybmVzc1xyXG4iKS51bndyYXAoKTsKIGxldCBuYXRpdmU9c3RkOjpwcm9jZXNzOjpDb21tYW5kOjpuZXcoImNtZC5leGUiKQogIC5hcmdzKFsiL2QiLCAiL2MiLCAiYWdlbnQudG9vbCJdKQogIC5lbnYoIlBBVEgiLCAmZGlyKS5lbnYoIlBBVEhFWFQiLCAiLkVYRTsuQ01EIikuY3VycmVudF9kaXIoJmRpcikKICAub3V0cHV0KCkuZXhwZWN0KCJuYXRpdmUgY21kIGxvb2t1cCBsYXVuY2hlcyIpOwogYXNzZXJ0IShuYXRpdmUuc3RhdHVzLnN1Y2Nlc3MoKSwgIm5hdGl2ZSBjbWQgbG9va3VwIG11c3QgYWNjZXB0IGRvdHRlZCBiYXNlbmFtZTogezo/fSIsbmF0aXZlKTsKIGxldCBuYXRpdmVfc3Rkb3V0PVN0cmluZzo6ZnJvbV91dGY4KG5hdGl2ZS5zdGRvdXQpLnVud3JhcCgpOwogYXNzZXJ0X2VxIShuYXRpdmVfc3Rkb3V0LnRyaW0oKSwgImludGVuZGVkLWhhcm5lc3MiLCAiaW5kZXBlbmRlbnQgV2luZG93cyBsb29rdXAgYXBwZW5kcyBQQVRIRVhUIHRvIGRvdHRlZCBiYXNlbmFtZSIpOwogcHJpbnRsbiEoIk5BVElWRV9XSU5ET1dTX0NPTlRST0w9e30iLG5hdGl2ZV9zdGRvdXQudHJpbSgpKTsKIGxldCBzZWFyY2g9RXhlY3V0YWJsZVNlYXJjaHtwYXRoOlNvbWUoZGlyLmFzX29zX3N0cigpKSxleHRlbnNpb25zOlNvbWUoT3NTdHI6Om5ldygiLkVYRTsuQ01EIikpfTsKIGxldCBwYXRoPXJlc29sdmVfcHJvZ3JhbShPc1N0cjo6bmV3KCJhZ2VudC50b29sIiksc2VhcmNoKS5leHBlY3QoImRvdHRlZCBoYXJuZXNzIHJlc29sdmVzIik7CiBsZXQgb3V0cHV0PXN0ZDo6cHJvY2Vzczo6Q29tbWFuZDo6bmV3KHBhdGgpLm91dHB1dCgpLmV4cGVjdCgicmVzb2x2ZWQgaGFybmVzcyBsYXVuY2hlcyIpOwogYXNzZXJ0IShvdXRwdXQuc3RhdHVzLnN1Y2Nlc3MoKSk7CiBsZXQgc3Rkb3V0PVN0cmluZzo6ZnJvbV91dGY4KG91dHB1dC5zdGRvdXQpLnVud3JhcCgpOwogc3RkOjpmczo6cmVtb3ZlX2Rpcl9hbGwoZGlyKS51bndyYXAoKTsKIGFzc2VydF9lcSEoc3Rkb3V0LnRyaW0oKSwiaW50ZW5kZWQtaGFybmVzcyIsIlBBVEhFWFQgbXVzdCBwcmVzZXJ2ZSB0aGUgY29tcGxldGUgZG90dGVkIGhhcm5lc3MgbmFtZSIpOwp9Cg=='').decode();a=probe.index(''fn
+        resolve_program'');z=probe.index(''\n#[test]'',a);assert probe[a:z]==actual
+
+        Path(''native-receipts'').mkdir(exist_ok=True);Path(''native-receipts/probe.rs'').write_text(probe)
+
+        subprocess.run([''rustc'',''+1.95.0'',''--edition=2024'',''--test'',''native-receipts/probe.rs'',''-o'',''native-receipts/probe.exe''],check=True)
+
+        r=subprocess.run([''native-receipts/probe.exe'',''--exact'',''dotted_harness_name_launches_its_own_pathext_sibling'',''--nocapture''],capture_output=True,text=True);log=r.stdout+r.stderr;Path(''native-receipts/baseline.log'').write_text(log);print(log)
+
+        assert r.returncode==101
+
+        assert ''PATHEXT must preserve the complete dotted harness name'' in log
+
+        assert ''wrong-harness'' in log and ''intended-harness'' in log
+
+        assert ''NATIVE_WINDOWS_CONTROL=intended-harness'' in log
+
+        assert re.search(r''test result: FAILED\. 0 passed; 1 failed;'',log)
+
+        Path(''native-receipts/result.json'').write_text(json.dumps({''base'':''11ab1003d9ef3788f5fc40b87fff54abf7f17dc0'',''returncode'':r.returncode,''meaning'':''Exact
+        current production resolver selected and launched wrong same-directory command
+        for dotted name'',''scope'':''Native Windows function+actualprocess proof
+        only, not Cargo/workspace final qualification'',''source_sha256'':''8931da5d37103e3c76b979ae48265eb85b90ee3787392a040c8735e606a5c2ec''},indent=2))
+
+
+        PY'
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: always()
+      with:
+        name: dotted-pathext-baseline-${{ github.run_id }}
+        path: native-receipts
