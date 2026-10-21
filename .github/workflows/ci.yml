@@ -1,366 +1,143 @@
-name: Candidate qualification
-on:
-  workflow_dispatch:
-    inputs:
-      candidate:
-        type: choice
-        required: true
-        options: [markdown, atomic-download, percent-destination]
-      base:
-        type: string
-        required: true
-        default: "3334785675d8e56349107f68aef48a3ecbf4ada9"
-      patch_base64:
-        type: string
-        required: true
-      patch_sha256:
-        type: string
-        required: true
-      tests_patch_base64:
-        type: string
-        required: true
-      tests_patch_sha256:
-        type: string
-        required: true
+name: AI memory1499 native repair qualification
+'on':
+  workflow_dispatch: {}
 permissions:
   contents: read
-concurrency:
-  group: ai-memory-qualification-${{ inputs.candidate }}
-  cancel-in-progress: false
 env:
-  CARGO_BUILD_JOBS: "2"
+  CARGO_BUILD_JOBS: '2'
   CARGO_TERM_COLOR: never
-  RUST_BACKTRACE: "1"
-  TAILWIND_BUILD: "1"
 jobs:
-  baseline:
-    if: github.repository == 'rudycelekli/ai-memory'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - ubuntu-24.04
+        - windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 55
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: akitaonrails/ai-memory
-          ref: 3334785675d8e56349107f68aef48a3ecbf4ada9
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
-        with:
-          toolchain: "1.95"
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
-        with:
-          shared-key: ai-native-1.95
-      - name: Verify frozen base, reviewed paths and patch digest; apply working tree only
-        env:
-          CANDIDATE: ${{ inputs.candidate }}
-          MODE: baseline
-          BASE: ${{ inputs.base }}
-          PATCH_BASE64: ${{ inputs.patch_base64 }}
-          PATCH_SHA256: ${{ inputs.patch_sha256 }}
-          TESTS_PATCH_BASE64: ${{ inputs.tests_patch_base64 }}
-          TESTS_PATCH_SHA256: ${{ inputs.tests_patch_sha256 }}
-        run: |
-          python3 - <<'PY'
-          import base64,hashlib,json,os,pathlib,subprocess
-          EXPECTED = {'markdown': {'base': '3334785675d8e56349107f68aef48a3ecbf4ada9', 'paths': ['CHANGELOG.md', 'crates/ai-memory-mcp/src/admin.rs', 'crates/ai-memory-wiki/src/markdown.rs', 'docs/okf.md'], 'tests_paths': ['crates/ai-memory-mcp/src/admin.rs', 'crates/ai-memory-wiki/src/markdown.rs'], 'candidate_sha256': '9db73303882188edef8fecc8c1b94a96d706ac9eda7110ba90718c809199f75d', 'tests_sha256': 'f955747f2efe1672a03aff99a9c3b53b2ab3581e1d46cfc89e52b96c6dce08ff', 'candidate_bytes': 9292, 'tests_bytes': 4973}, 'atomic-download': {'base': '3334785675d8e56349107f68aef48a3ecbf4ada9', 'paths': ['CHANGELOG.md', 'crates/ai-memory-cli/src/http_client.rs', 'crates/ai-memory-cli/tests/suite/main.rs', 'docs/okf.md', 'crates/ai-memory-cli/tests/suite/backup_download.rs'], 'tests_paths': ['crates/ai-memory-cli/tests/suite/main.rs', 'crates/ai-memory-cli/tests/suite/backup_download.rs'], 'candidate_sha256': '8c984e29c5c6c561708d720f48e92de66eaba9bd1edf0eb705df228902139560', 'tests_sha256': '756fbf69a8f122062e1f42d21510bbc05e99cf7fcb10664e9e40ab0f4718d5f4', 'candidate_bytes': 19968, 'tests_bytes': 11317}, 'percent-destination': {'base': '3334785675d8e56349107f68aef48a3ecbf4ada9', 'paths': ['CHANGELOG.md', 'crates/ai-memory-web/src/markdown.rs', 'crates/ai-memory-web/tests/suite/routes.rs', 'crates/ai-memory-wiki/src/lib.rs', 'crates/ai-memory-wiki/src/markdown.rs', 'docs/okf.md', 'docs/security-boundaries.md'], 'tests_paths': ['crates/ai-memory-web/src/markdown.rs', 'crates/ai-memory-web/tests/suite/routes.rs', 'crates/ai-memory-wiki/src/markdown.rs'], 'candidate_sha256': 'ba6322de285c2ed68d78a77c765c2e3c8d6f5feaae17ca9a87a7b6e175dc97b8', 'tests_sha256': '456e98a69c75512069a7bf477bb7d796bfd2475313e96b510dcce5d2a10047a4', 'candidate_bytes': 27673, 'tests_bytes': 8759}}
-          name=os.environ['CANDIDATE']; mode=os.environ['MODE']; expected=EXPECTED[name]
-          assert os.environ['BASE']==expected['base'], 'base input mismatch'
-          head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
-          assert head==expected['base'], 'checkout revision mismatch'
-          assert not subprocess.check_output(['git','status','--porcelain'],text=True).strip(), 'checkout not clean'
-          key='tests_sha256' if mode=='baseline' else 'candidate_sha256'
-          supplied=os.environ['TESTS_PATCH_SHA256' if mode=='baseline' else 'PATCH_SHA256']
-          encoded=os.environ['TESTS_PATCH_BASE64' if mode=='baseline' else 'PATCH_BASE64']
-          assert supplied==expected[key], 'unreviewed patch digest'
-          patch=base64.b64decode(encoded,validate=True)
-          assert len(patch)<=65536 and hashlib.sha256(patch).hexdigest()==expected[key], 'patch integrity mismatch'
-          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'ai-memory-qualification';root.mkdir(exist_ok=True)
-          f=root/'applied.patch';f.write_bytes(patch)
-          stat=subprocess.check_output(['git','apply','--numstat',str(f)],text=True)
-          paths=[line.split('\t',2)[2]for line in stat.splitlines()]
-          allowed=expected['tests_paths' if mode=='baseline' else 'paths']
-          assert paths and len(paths)==len(set(paths))and set(paths)==set(allowed), 'path allowlist mismatch'
-          assert all(not pathlib.PurePosixPath(p).is_absolute()and '..'not in pathlib.PurePosixPath(p).parts for p in paths)
-          subprocess.run(['git','apply','--check',str(f)],check=True)
-          subprocess.run(['git','apply',str(f)],check=True)
-          subprocess.run(['git','diff','--check'],check=True)
-          metadata={'candidate':name,'mode':mode,'base':head,'patch_sha256':expected[key],'paths':paths,'source_commit_pushed':False,'platform':'ubuntu-latest','rust':'1.95','workflow_commit':os.environ['GITHUB_SHA']}
-          (root/'metadata.json').write_text(json.dumps(metadata,indent=2)+'\n')
-          print(json.dumps(metadata))
-          PY
-      - name: Record native compiler and resource budget
-        run: |
-          rustc --version
-          cargo --version
-          rustc --version | grep '^rustc 1.95.'
-          df -h .
-      - name: Require actual baseline regression assertions (compile errors do not count)
-        env:
-          CANDIDATE: ${{ inputs.candidate }}
-        run: |
-          python3 - <<'PY'
-          import json,os,pathlib,subprocess
-          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'ai-memory-qualification'
-          name=os.environ['CANDIDATE']
-          child_env={key:value for key,value in os.environ.items()if key not in {'GITHUB_TOKEN','GH_TOKEN'}and not key.startswith(('OPENAI_','ANTHROPIC_','AWS_','AZURE_','GOOGLE_','GEMINI_','AI_MEMORY_'))}
-          checks={
-          'markdown':[
-           ['cargo','test','--locked','-p','ai-memory-wiki','extract_links_handles_nested_and_escaped_labels','--','--nocapture'],
-           ['cargo','test','--locked','-p','ai-memory-wiki','export_labels_keep_their_link_when_reindexed','--','--nocapture'],
-           ['cargo','test','--locked','-p','ai-memory-mcp','export_okf_labels_preserve_links_when_the_bundle_is_reindexed','--','--nocapture']],
-          'atomic-download':[
-           ['cargo','test','--locked','-p','ai-memory-cli','--test','suite','backup_download::interrupted_archive_download_preserves_previous_output','--','--exact','--nocapture'],
-           ['cargo','test','--locked','-p','ai-memory-cli','--test','suite','backup_download::interrupted_archive_download_leaves_no_partial_output','--','--exact','--nocapture']],
-          'percent-destination':[
-           ['cargo','test','--locked','-p','ai-memory-wiki','markdown_url_paths_decode_once_before_link_resolution','--','--nocapture'],
-           ['cargo','test','--locked','-p','ai-memory-web','markdown_url_destinations_are_decoded_once_before_route_encoding','--','--nocapture'],
-           ['cargo','test','--locked','-p','ai-memory-web','--lib','encoded_markdown_links_resolve_and_remain_in_the_source_scope','--','--nocapture']]}
-          ATOMIC_ASSERTIONS={
-           'backup_download::interrupted_archive_download_preserves_previous_output': 'assertion `left == right` failed',
-           'backup_download::interrupted_archive_download_leaves_no_partial_output': 'failed download must not publish a partial archive',
-          }
-          def validate_baseline_result(candidate,cmd,returncode,log):
-           assert returncode==101, 'baseline must fail with cargo test failure, not success or infrastructure exit'
-           assert 'test result: FAILED' in log and 'panicked at' in log, 'expected native assertion failure missing'
-           assert 'could not compile'not in log and 'error[E'not in log, 'compilation errors are not regression evidence'
-           target=cmd[cmd.index('--')-1]
-           assert target in log, 'requested regression was not reported'
-           if candidate=='atomic-download':
-            assert f"test {target} ... FAILED" in log, 'requested atomic regression did not fail'
-            assert f"thread '{target}'" in log, 'requested atomic regression did not panic'
-            assert ATOMIC_ASSERTIONS[target] in log, 'expected atomic assertion message missing'
-           elif candidate=='percent-destination' and target=='markdown_url_destinations_are_decoded_once_before_route_encoding':
-            assert 'test markdown::tests::'+target+' ... FAILED' in log, 'requested web regression did not fail'
-            assert "thread 'markdown::tests::"+target+"'" in log, 'requested web regression did not panic'
-            assert '<p><a href="w/default/scratch/p/notes/my%2520note.md#part">' in log, 'expected double-encoded output missing'
-           else:
-            assert 'assertion' in log, 'expected native assertion failure missing'
-           return target
-          results=[]
-          for i,cmd in enumerate(checks[name]):
-           result=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=2100,env=child_env)
-           log=result.stdout;(root/f'baseline-{i}.log').write_text(log);print(log)
-           target=validate_baseline_result(name,cmd,result.returncode,log)
-           results.append({'command':cmd,'exit':result.returncode,'assertion_failure':True})
-          (root/'baseline-results.json').write_text(json.dumps(results,indent=2)+'\n')
-          PY
-      - name: Preserve native receipts
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: ${{ inputs.candidate }}-baseline-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ai-memory-qualification/
-          if-no-files-found: error
-          retention-days: 14
-  candidate:
-    if: github.repository == 'rudycelekli/ai-memory'
-    needs: baseline
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: akitaonrails/ai-memory
-          ref: 3334785675d8e56349107f68aef48a3ecbf4ada9
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
-        with:
-          toolchain: "1.95"
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
-        with:
-          shared-key: ai-native-1.95
-      - name: Verify frozen base, reviewed paths and patch digest; apply working tree only
-        env:
-          CANDIDATE: ${{ inputs.candidate }}
-          MODE: candidate
-          BASE: ${{ inputs.base }}
-          PATCH_BASE64: ${{ inputs.patch_base64 }}
-          PATCH_SHA256: ${{ inputs.patch_sha256 }}
-          TESTS_PATCH_BASE64: ${{ inputs.tests_patch_base64 }}
-          TESTS_PATCH_SHA256: ${{ inputs.tests_patch_sha256 }}
-        run: |
-          python3 - <<'PY'
-          import base64,hashlib,json,os,pathlib,subprocess
-          EXPECTED = {'markdown': {'base': '3334785675d8e56349107f68aef48a3ecbf4ada9', 'paths': ['CHANGELOG.md', 'crates/ai-memory-mcp/src/admin.rs', 'crates/ai-memory-wiki/src/markdown.rs', 'docs/okf.md'], 'tests_paths': ['crates/ai-memory-mcp/src/admin.rs', 'crates/ai-memory-wiki/src/markdown.rs'], 'candidate_sha256': '9db73303882188edef8fecc8c1b94a96d706ac9eda7110ba90718c809199f75d', 'tests_sha256': 'f955747f2efe1672a03aff99a9c3b53b2ab3581e1d46cfc89e52b96c6dce08ff', 'candidate_bytes': 9292, 'tests_bytes': 4973}, 'atomic-download': {'base': '3334785675d8e56349107f68aef48a3ecbf4ada9', 'paths': ['CHANGELOG.md', 'crates/ai-memory-cli/src/http_client.rs', 'crates/ai-memory-cli/tests/suite/main.rs', 'docs/okf.md', 'crates/ai-memory-cli/tests/suite/backup_download.rs'], 'tests_paths': ['crates/ai-memory-cli/tests/suite/main.rs', 'crates/ai-memory-cli/tests/suite/backup_download.rs'], 'candidate_sha256': '8c984e29c5c6c561708d720f48e92de66eaba9bd1edf0eb705df228902139560', 'tests_sha256': '756fbf69a8f122062e1f42d21510bbc05e99cf7fcb10664e9e40ab0f4718d5f4', 'candidate_bytes': 19968, 'tests_bytes': 11317}, 'percent-destination': {'base': '3334785675d8e56349107f68aef48a3ecbf4ada9', 'paths': ['CHANGELOG.md', 'crates/ai-memory-web/src/markdown.rs', 'crates/ai-memory-web/tests/suite/routes.rs', 'crates/ai-memory-wiki/src/lib.rs', 'crates/ai-memory-wiki/src/markdown.rs', 'docs/okf.md', 'docs/security-boundaries.md'], 'tests_paths': ['crates/ai-memory-web/src/markdown.rs', 'crates/ai-memory-web/tests/suite/routes.rs', 'crates/ai-memory-wiki/src/markdown.rs'], 'candidate_sha256': 'ba6322de285c2ed68d78a77c765c2e3c8d6f5feaae17ca9a87a7b6e175dc97b8', 'tests_sha256': '456e98a69c75512069a7bf477bb7d796bfd2475313e96b510dcce5d2a10047a4', 'candidate_bytes': 27673, 'tests_bytes': 8759}}
-          name=os.environ['CANDIDATE']; mode=os.environ['MODE']; expected=EXPECTED[name]
-          assert os.environ['BASE']==expected['base'], 'base input mismatch'
-          head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
-          assert head==expected['base'], 'checkout revision mismatch'
-          assert not subprocess.check_output(['git','status','--porcelain'],text=True).strip(), 'checkout not clean'
-          key='tests_sha256' if mode=='baseline' else 'candidate_sha256'
-          supplied=os.environ['TESTS_PATCH_SHA256' if mode=='baseline' else 'PATCH_SHA256']
-          encoded=os.environ['TESTS_PATCH_BASE64' if mode=='baseline' else 'PATCH_BASE64']
-          assert supplied==expected[key], 'unreviewed patch digest'
-          patch=base64.b64decode(encoded,validate=True)
-          assert len(patch)<=65536 and hashlib.sha256(patch).hexdigest()==expected[key], 'patch integrity mismatch'
-          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'ai-memory-qualification';root.mkdir(exist_ok=True)
-          f=root/'applied.patch';f.write_bytes(patch)
-          stat=subprocess.check_output(['git','apply','--numstat',str(f)],text=True)
-          paths=[line.split('\t',2)[2]for line in stat.splitlines()]
-          allowed=expected['tests_paths' if mode=='baseline' else 'paths']
-          assert paths and len(paths)==len(set(paths))and set(paths)==set(allowed), 'path allowlist mismatch'
-          assert all(not pathlib.PurePosixPath(p).is_absolute()and '..'not in pathlib.PurePosixPath(p).parts for p in paths)
-          subprocess.run(['git','apply','--check',str(f)],check=True)
-          subprocess.run(['git','apply',str(f)],check=True)
-          subprocess.run(['git','diff','--check'],check=True)
-          metadata={'candidate':name,'mode':mode,'base':head,'patch_sha256':expected[key],'paths':paths,'source_commit_pushed':False,'platform':'ubuntu-latest','rust':'1.95','workflow_commit':os.environ['GITHUB_SHA']}
-          (root/'metadata.json').write_text(json.dumps(metadata,indent=2)+'\n')
-          print(json.dumps(metadata))
-          PY
-      - name: Require exact full-index identity immediately after apply
-        env:
-          EXPECTED_SHA256: ${{ inputs.patch_sha256 }}
-          IDENTITY_PHASE: preflight
-        run: |
-          python3 - <<'PY'
-          import hashlib,json,os,pathlib,stat,subprocess
-          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'ai-memory-qualification';root.mkdir(exist_ok=True)
-          phase=os.environ.get('IDENTITY_PHASE','final')
-          canonical=subprocess.check_output(['git','diff','--binary','--full-index'])
-          untracked=subprocess.check_output(['git','ls-files','--others','--exclude-standard'],text=True).splitlines()
-          for file in untracked:
-           result=subprocess.run(['git','diff','--no-index','--binary','--full-index','--','/dev/null',file],capture_output=True)
-           assert result.returncode==1, 'failed to inspect new file'
-           canonical+=result.stdout
-          (root/(phase+'.patch')).write_bytes(canonical)
-          status=subprocess.check_output(['git','status','--porcelain=v1','-uall'],text=True)
-          (root/(phase+'-status.txt')).write_text(status)
-          paths=subprocess.check_output(['git','diff','--name-only'],text=True).splitlines()+untracked
-          files={}
-          for name in sorted(set(paths)):
-           p=pathlib.Path(name)
-           if not p.exists() and not p.is_symlink(): files[name]={'deleted':True};continue
-           data=os.readlink(p).encode()if p.is_symlink()else p.read_bytes()
-           files[name]={'sha256':hashlib.sha256(data).hexdigest(),'mode':oct(stat.S_IMODE(p.lstat().st_mode)),'bytes':len(data),'symlink':p.is_symlink()}
-          (root/(phase+'-source-files.json')).write_text(json.dumps(files,indent=2)+chr(10))
-          actual=hashlib.sha256(canonical).hexdigest()
-          (root/(phase+'-patch-identity.json')).write_text(json.dumps({'sha256':actual,'expected':os.environ['EXPECTED_SHA256'],'serializer':'git diff --binary --full-index plus untracked no-index binary full-index','including_untracked_files':True},indent=2)+chr(10))
-          subprocess.run(['git','diff','--check'],check=True)
-          assert actual==os.environ['EXPECTED_SHA256'], 'qualification patch identity mismatch; actual patch/status/source hashes retained'
-          print(phase+' reviewed patch SHA-256:',actual)
-          PY
-      - name: Record native compiler and resource budget
-        run: |
-          rustc --version
-          cargo --version
-          rustc --version | grep '^rustc 1.95.'
-          df -h .
-      - name: Formatting
-        env:
-          QUALIFICATION_COMMAND: 'cargo fmt --all -- --check 2>&1 | tee "$RUNNER_TEMP/ai-memory-qualification/formatting.log"'
-        run: |
-          python3 - <<'PY'
-          import os
-          for key in list(os.environ):
-           if key in {'GITHUB_TOKEN','GH_TOKEN'}or key.startswith(('OPENAI_','ANTHROPIC_','AWS_','AZURE_','GOOGLE_','GEMINI_','AI_MEMORY_')):
-            os.environ.pop(key,None)
-          os.execvp('bash',['bash','-euo','pipefail','-c',os.environ['QUALIFICATION_COMMAND']])
-          PY
-      - name: Clippy
-        env:
-          QUALIFICATION_COMMAND: 'cargo clippy --locked --workspace --all-targets -- -D warnings 2>&1 | tee "$RUNNER_TEMP/ai-memory-qualification/clippy.log"'
-        run: |
-          python3 - <<'PY'
-          import os
-          for key in list(os.environ):
-           if key in {'GITHUB_TOKEN','GH_TOKEN'}or key.startswith(('OPENAI_','ANTHROPIC_','AWS_','AZURE_','GOOGLE_','GEMINI_','AI_MEMORY_')):
-            os.environ.pop(key,None)
-          os.execvp('bash',['bash','-euo','pipefail','-c',os.environ['QUALIFICATION_COMMAND']])
-          PY
-      - name: All workspace and target tests
-        env:
-          QUALIFICATION_COMMAND: 'cargo test --locked --workspace --all-targets 2>&1 | tee "$RUNNER_TEMP/ai-memory-qualification/all-workspace-and-target-tests.log"'
-        run: |
-          python3 - <<'PY'
-          import os
-          for key in list(os.environ):
-           if key in {'GITHUB_TOKEN','GH_TOKEN'}or key.startswith(('OPENAI_','ANTHROPIC_','AWS_','AZURE_','GOOGLE_','GEMINI_','AI_MEMORY_')):
-            os.environ.pop(key,None)
-          os.execvp('bash',['bash','-euo','pipefail','-c',os.environ['QUALIFICATION_COMMAND']])
-          PY
-      - name: Doctests
-        env:
-          QUALIFICATION_COMMAND: 'cargo test --locked --workspace --doc 2>&1 | tee "$RUNNER_TEMP/ai-memory-qualification/doctests.log"'
-        run: |
-          python3 - <<'PY'
-          import os
-          for key in list(os.environ):
-           if key in {'GITHUB_TOKEN','GH_TOKEN'}or key.startswith(('OPENAI_','ANTHROPIC_','AWS_','AZURE_','GOOGLE_','GEMINI_','AI_MEMORY_')):
-            os.environ.pop(key,None)
-          os.execvp('bash',['bash','-euo','pipefail','-c',os.environ['QUALIFICATION_COMMAND']])
-          PY
-      - name: Dependency policy
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25
-        with:
-          log-level: warn
-          command: check
-          arguments: --all-features
-      - name: Require native guard-removal failures and restore candidate
-        if: inputs.candidate == 'percent-destination'
-        run: |
-          python3 - <<'PY'
-          import json,os,pathlib,subprocess
-          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'ai-memory-qualification'
-          wiki=pathlib.Path('crates/ai-memory-wiki/src/markdown.rs');web=pathlib.Path('crates/ai-memory-web/src/markdown.rs')
-          wiki_test=['cargo','test','--locked','-p','ai-memory-wiki','decoded_markdown_paths_cannot_escape_or_change_scope','--','--nocapture']
-          web_test=['cargo','test','--locked','-p','ai-memory-web','decoded_markdown_destinations_cannot_change_the_web_scope','--','--nocapture']
-          ws=wiki.read_text();ss=web.read_text();start=ss.index('    if decoded_path.is_empty()');end=ss.index('    let mut path_part =',start)
-          cases=[
-           ('encoded-controls',wiki,'if byte.is_ascii_control() {','if false {',wiki_test),
-           ('invalid-utf8',wiki,'String::from_utf8(decoded).ok().map(std::borrow::Cow::Owned)','Some(std::borrow::Cow::Owned(String::from_utf8_lossy(&decoded).into_owned()))',wiki_test),
-           ('root-traversal',wiki,'parts.pop()?;','parts.pop();',wiki_test),
-           ('decoded-web-guard',web,ss[start:end],'',web_test),
-          ]
-          results=[]
-          child_env={key:value for key,value in os.environ.items()if key not in {'GITHUB_TOKEN','GH_TOKEN'}and not key.startswith(('OPENAI_','ANTHROPIC_','AWS_','AZURE_','GOOGLE_','GEMINI_','AI_MEMORY_'))}
-          for name,file,old,new,cmd in cases:
-           original=file.read_bytes();text=original.decode();assert text.count(old)==1,(name,'mutation is not unique')
-           try:
-            file.write_text(text.replace(old,new,1));r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=300,env=child_env);(root/('bite-'+name+'.log')).write_text(r.stdout);print(r.stdout)
-            assert r.returncode==101 and 'test result: FAILED'in r.stdout and 'panicked at'in r.stdout,'guard removal must fail a native assertion'
-            assert 'could not compile'not in r.stdout and 'error[E'not in r.stdout,'compile failure is not guard evidence'
-            results.append({'guard':name,'exit':r.returncode,'assertion_failure':True,'source':str(file)})
-           finally:file.write_bytes(original)
-          (root/'guard-bites.json').write_text(json.dumps(results,indent=2)+'\n')
-          PY
-      - name: Verify whitespace and final patch identity including new files
-        env:
-          CANDIDATE: ${{ inputs.candidate }}
-          EXPECTED_SHA256: ${{ inputs.patch_sha256 }}
-        run: |
-          python3 - <<'PY'
-          import hashlib,json,os,pathlib,stat,subprocess
-          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'ai-memory-qualification';root.mkdir(exist_ok=True)
-          phase=os.environ.get('IDENTITY_PHASE','final')
-          canonical=subprocess.check_output(['git','diff','--binary','--full-index'])
-          untracked=subprocess.check_output(['git','ls-files','--others','--exclude-standard'],text=True).splitlines()
-          for file in untracked:
-           result=subprocess.run(['git','diff','--no-index','--binary','--full-index','--','/dev/null',file],capture_output=True)
-           assert result.returncode==1, 'failed to inspect new file'
-           canonical+=result.stdout
-          (root/(phase+'.patch')).write_bytes(canonical)
-          status=subprocess.check_output(['git','status','--porcelain=v1','-uall'],text=True)
-          (root/(phase+'-status.txt')).write_text(status)
-          paths=subprocess.check_output(['git','diff','--name-only'],text=True).splitlines()+untracked
-          files={}
-          for name in sorted(set(paths)):
-           p=pathlib.Path(name)
-           if not p.exists() and not p.is_symlink(): files[name]={'deleted':True};continue
-           data=os.readlink(p).encode()if p.is_symlink()else p.read_bytes()
-           files[name]={'sha256':hashlib.sha256(data).hexdigest(),'mode':oct(stat.S_IMODE(p.lstat().st_mode)),'bytes':len(data),'symlink':p.is_symlink()}
-          (root/(phase+'-source-files.json')).write_text(json.dumps(files,indent=2)+chr(10))
-          actual=hashlib.sha256(canonical).hexdigest()
-          (root/(phase+'-patch-identity.json')).write_text(json.dumps({'sha256':actual,'expected':os.environ['EXPECTED_SHA256'],'serializer':'git diff --binary --full-index plus untracked no-index binary full-index','including_untracked_files':True},indent=2)+chr(10))
-          subprocess.run(['git','diff','--check'],check=True)
-          assert actual==os.environ['EXPECTED_SHA256'], 'qualification patch identity mismatch; actual patch/status/source hashes retained'
-          print(phase+' reviewed patch SHA-256:',actual)
-          PY
-      - name: Preserve native receipts
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: ${{ inputs.candidate }}-candidate-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ai-memory-qualification/
-          if-no-files-found: error
-          retention-days: 14
+    - name: Normalize only owned runner checkout newlines
+      shell: bash
+      run: 'git config --global core.autocrlf false
+
+        git config --global core.eol lf'
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: akitaonrails/ai-memory
+        ref: 5519b89cc653bec4cfccbb770c6b4e5dcfcda759
+        persist-credentials: false
+    - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      with:
+        toolchain: '1.95'
+        components: rustfmt,clippy
+    - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
+      with:
+        shared-key: ai-native-1.95
+    - name: Apply frozen candidate and verify all blobs
+      shell: python
+      run: 'import base64,hashlib,json,os,pathlib,subprocess
+
+        M={''base'': ''5519b89cc653bec4cfccbb770c6b4e5dcfcda759'', ''patch_sha256'':
+        ''5bd463517f68ab947a1f58875dd7fd1478092ec7f80eedacc612197c39232486'', ''paths'':
+        [''CHANGELOG.md'', ''crates/ai-memory-store/src/migrations.rs''], ''baseline_run'':
+        ''https://github.com/rudycelekli/ai-memory/actions/runs/39540810795'', ''baseline'':
+        ''Actual Rust/refinery3publicchecksumcontrols passed before expected DivergentVersion
+        reopen failure'', ''state'': ''PRIVATE_CANDIDATE_NOT_QUALIFIED'', ''files'':
+        {''CHANGELOG.md'': ''1bf195e0a27e840cbd7bb5bb725c7aa4d4f17e9bbdbc9caf7677e7221ffe3f67'',
+        ''crates/ai-memory-store/src/migrations.rs'': ''269388728e994c049fdf1e543553092309f03f8e829783b868d11f53dc28a244''},
+        ''local_format_tool'': ''rustfmt1.8.0-stable01f6ddf7582026-02-11; hostedRust1.95
+        fmt gate pending'', ''independent_review'': ''accepted_new_lane found no code
+        blocker; added requested actual CRLF-SQL-created database/schema/data/integrity/idempotency
+        regression''}
+
+        assert subprocess.check_output([''git'',''rev-parse'',''HEAD''],text=True).strip()==M[''base'']
+
+        assert not subprocess.check_output([''git'',''status'',''--porcelain''],text=True).strip()
+
+        raw=base64.b64decode(''ZGlmZiAtLWdpdCBhL0NIQU5HRUxPRy5tZCBiL0NIQU5HRUxPRy5tZAppbmRleCBlYzNkZGQ1NjIyOTBkYjZjYTkyZjk0ZDY5ZWI2MTYyN2RkMjkxZjdmLi4xYjQwYjE0ZTI0YzI3NjRjNWJiNDdiYzViMWUxZTdhOTY5ODBjZmFhIDEwMDY0NAotLS0gYS9DSEFOR0VMT0cubWQKKysrIGIvQ0hBTkdFTE9HLm1kCkBAIC0xNCw2ICsxNCw4IEBAIHZlcnNpb24gaW4gW2Bkb2NzL2NoYW5nZWxvZy9gXShkb2NzL2NoYW5nZWxvZy8pOgogIyMgWzMuMS4yXSAtIDIwMjYtMTAtMjAKIAogIyMjIEZpeGVkCisKKy0gUmVwYWlyZWQgbWF0Y2hpbmcgQ1JMRiBtaWdyYXRpb24gY2hlY2tzdW1zIGZyb20gV2luZG93cyBpbnN0YWxscyB0aHJvdWdoIDMuMS4xIGJlZm9yZSB0aGUgc3RyaWN0IHNjaGVtYSBjaGVjaywgcHJlc2VydmluZyByZWZ1c2FsIG9mIHVucmVsYXRlZCBtaWdyYXRpb24gY2hhbmdlcy4gKCMxNDk5KQogLSBSZXBvcnRlZCBhcHBlbmRlZCBhbmQgcmVtb3ZlZCBsaW5lcyBpbiB3aWtpIHN5bmMgY29uZmxpY3Qgc3VtbWFyaWVzLCB3aXRoCiAgIGFuIGV4cGxpY2l0IGVuZC1vZi1maWxlIG1hcmtlciBpbnN0ZWFkIG9mIGxpbmUgMCBhbmQgbWF0Y2hpbmcgcHJldmlld3MuCiAgIChbIzE0NzddKGh0dHBzOi8vZ2l0aHViLmNvbS9ha2l0YW9ucmFpbHMvYWktbWVtb3J5L2lzc3Vlcy8xNDc3KSkKZGlmZiAtLWdpdCBhL2NyYXRlcy9haS1tZW1vcnktc3RvcmUvc3JjL21pZ3JhdGlvbnMucnMgYi9jcmF0ZXMvYWktbWVtb3J5LXN0b3JlL3NyYy9taWdyYXRpb25zLnJzCmluZGV4IGU1NmU2MmMyODExMjhjYWNjOGE3NGQ4ZjExMWQyNjUyZjc0ZWE2OGIuLjU5MDRlMWI5ZWJkOWFlM2RlOTU5NzM4NjUyZDgyMjBlNDM3MWVmNTAgMTAwNjQ0Ci0tLSBhL2NyYXRlcy9haS1tZW1vcnktc3RvcmUvc3JjL21pZ3JhdGlvbnMucnMKKysrIGIvY3JhdGVzL2FpLW1lbW9yeS1zdG9yZS9zcmMvbWlncmF0aW9ucy5ycwpAQCAtMjMsNiArMjMsNyBAQCBjb25zdCBWNjJfTkFNRTogJnN0ciA9ICJwYWdlX2luZ2VzdGlvbl93aW5kb3dzIjsKIC8vLyBpcyByZW1hcHBlZCB0byBbYFN0b3JlRXJyb3I6OkRhdGFTY2hlbWFBaGVhZGBdLCB3aGljaCBuYW1lcyB0aGUgb2ZmZW5kaW5nCiAvLy8gbWlncmF0aW9uIGFuZCBwb2ludHMgdGhlIG9wZXJhdG9yIGF0IHRoZSBmaXguCiBwdWIgZm4gcnVuKGNvbm46ICZtdXQgcnVzcWxpdGU6OkNvbm5lY3Rpb24pIC0+IFN0b3JlUmVzdWx0PCgpPiB7CisgICAgcmVwYWlyX3dpbmRvd3NfY3JsZl9jaGVja3N1bXMoY29ubik/OwogICAgIHJlcGFpcl9vcmlnaW5hbF92NjJfY2hlY2tzdW0oY29ubik/OwogICAgIG1pZ3JhdGlvbnM6OnJ1bm5lcigpCiAgICAgICAgIC5zZXRfYWJvcnRfZGl2ZXJnZW50KHRydWUpCkBAIC0zMiw2ICszMyw0OCBAQCBwdWIgZm4gcnVuKGNvbm46ICZtdXQgcnVzcWxpdGU6OkNvbm5lY3Rpb24pIC0+IFN0b3JlUmVzdWx0PCgpPiB7CiAgICAgT2soKCkpCiB9CiAKKy8vLyBXaW5kb3dzIHJlbGVhc2UgYnVpbGRzIHRocm91Z2ggdjMuMS4xIGVtYmVkZGVkIGNoZWNrb3V0LWNvbnZlcnRlZCBDUkxGIFNRTC4KKy8vLyBSZXBhaXIgb25seSB0aGF0IGJ5dGUtZXF1aXZhbGVudCBoaXN0b3J5OyBuZXZlciBhY2NlcHQgYW4gYXJiaXRyYXJ5IGRpdmVyZ2VuY2UuCitmbiByZXBhaXJfd2luZG93c19jcmxmX2NoZWNrc3Vtcyhjb25uOiAmcnVzcWxpdGU6OkNvbm5lY3Rpb24pIC0+IFN0b3JlUmVzdWx0PCgpPiB7CisgICAgbGV0IGhhc19oaXN0b3J5OiBib29sID0gY29ubi5xdWVyeV9yb3coCisgICAgICAgICJTRUxFQ1QgRVhJU1RTKFNFTEVDVCAxIEZST00gc3FsaXRlX21hc3RlciBcCisgICAgICAgICBXSEVSRSB0eXBlID0gJ3RhYmxlJyBBTkQgbmFtZSA9ICdyZWZpbmVyeV9zY2hlbWFfaGlzdG9yeScpIiwKKyAgICAgICAgW10sCisgICAgICAgIHxyb3d8IHJvdy5nZXQoMCksCisgICAgKT87CisgICAgaWYgIWhhc19oaXN0b3J5IHsKKyAgICAgICAgcmV0dXJuIE9rKCgpKTsKKyAgICB9CisgICAgbGV0IHRyYW5zYWN0aW9uID0gY29ubi51bmNoZWNrZWRfdHJhbnNhY3Rpb24oKT87CisgICAgZm9yIG1pZ3JhdGlvbiBpbiBtaWdyYXRpb25zOjpydW5uZXIoKS5nZXRfbWlncmF0aW9ucygpIHsKKyAgICAgICAgLy8gVjgzIHdhcyB0aGUgbGFzdCBtaWdyYXRpb24gaW4gdjMuMS4xLCBiZWZvcmUgU1FMIGNoZWNrb3V0cyB3ZXJlIHBpbm5lZCB0byBMRi4KKyAgICAgICAgaWYgbWlncmF0aW9uLnZlcnNpb24oKSA+IDgzIHsKKyAgICAgICAgICAgIGNvbnRpbnVlOworICAgICAgICB9CisgICAgICAgIGxldCBTb21lKHNxbCkgPSBtaWdyYXRpb24uc3FsKCkgZWxzZSB7CisgICAgICAgICAgICBjb250aW51ZTsKKyAgICAgICAgfTsKKyAgICAgICAgbGV0IGNybGZfc3FsID0gc3FsLnJlcGxhY2UoJ1xuJywgIlxyXG4iKTsKKyAgICAgICAgbGV0IGNybGYgPSByZWZpbmVyeTo6TWlncmF0aW9uOjp1bmFwcGxpZWQoJm1pZ3JhdGlvbi50b19zdHJpbmcoKSwgJmNybGZfc3FsKQorICAgICAgICAgICAgLm1hcF9lcnIoU3RvcmVFcnJvcjo6TWlncmF0aW9uKT87CisgICAgICAgIGlmIGNybGYuY2hlY2tzdW0oKSA9PSBtaWdyYXRpb24uY2hlY2tzdW0oKSB7CisgICAgICAgICAgICBjb250aW51ZTsKKyAgICAgICAgfQorICAgICAgICB0cmFuc2FjdGlvbi5leGVjdXRlKAorICAgICAgICAgICAgIlVQREFURSByZWZpbmVyeV9zY2hlbWFfaGlzdG9yeSBTRVQgY2hlY2tzdW0gPSA/MSBcCisgICAgICAgICAgICAgV0hFUkUgdmVyc2lvbiA9ID8yIEFORCBuYW1lID0gPzMgQU5EIGNoZWNrc3VtID0gPzQiLAorICAgICAgICAgICAgcnVzcWxpdGU6OnBhcmFtcyFbCisgICAgICAgICAgICAgICAgbWlncmF0aW9uLmNoZWNrc3VtKCkudG9fc3RyaW5nKCksCisgICAgICAgICAgICAgICAgbWlncmF0aW9uLnZlcnNpb24oKSwKKyAgICAgICAgICAgICAgICBtaWdyYXRpb24ubmFtZSgpLAorICAgICAgICAgICAgICAgIGNybGYuY2hlY2tzdW0oKS50b19zdHJpbmcoKSwKKyAgICAgICAgICAgIF0sCisgICAgICAgICk/OworICAgIH0KKyAgICB0cmFuc2FjdGlvbi5jb21taXQoKT87CisgICAgT2soKCkpCit9CisKIC8vLyBSZXdyaXRlIG9ubHkgdGhlIGtub3duIFY2MiBjaGVja3N1bSBwcm9kdWNlZCBieSB2Mi4yLjEuIFRoZSByZXBsYWNlbWVudAogLy8vIFNRTCBtb3ZlZCBhbiBlcXVpdmFsZW50IGJhY2tmaWxsIHRvIHRoZSBib3VuZGVkIGJvb3QgcGF0aCAoIzc3Nik7IHN0b3JlcwogLy8vIHRoYXQgYXBwbGllZCB0aGUgb3JpZ2luYWwgbWlncmF0aW9uIGFyZSBhbHJlYWR5IGluIHRoZSBzYW1lIGVuZCBzdGF0ZS4KQEAgLTE4MzUsNCArMTg3OCwyMTQgQEAgbW9kIHRlc3RzIHsKICAgICAgICAgICAgICJhIGNsYWltZWQgaWRlbnRpdHkgbXVzdCBzdGF5IHVuaXF1ZSBwZXIgd29ya3NwYWNlIgogICAgICAgICApOwogICAgIH0KKworICAgICNbdGVzdF0KKyAgICBmbiByZXZpZXdfd2luZG93c19jcmxmX2hpc3Rvcnlfb3BlbnNfd2l0aG91dF93ZWFrZW5pbmdfZGl2ZXJnZW5jZSgpIHsKKyAgICAgICAgbGV0IHJlbGVhc2VkID0gWworICAgICAgICAgICAgKAorICAgICAgICAgICAgICAgIDEsCisgICAgICAgICAgICAgICAgImluaXQiLAorICAgICAgICAgICAgICAgIGluY2x1ZGVfc3RyISgiLi4vbWlncmF0aW9ucy9WMDFfX2luaXQuc3FsIiksCisgICAgICAgICAgICAgICAgMTcyODU4NjgzMTQ0NzAxODQ0MTdfdTY0LAorICAgICAgICAgICAgKSwKKyAgICAgICAgICAgICgKKyAgICAgICAgICAgICAgICA2MiwKKyAgICAgICAgICAgICAgICAicGFnZV9pbmdlc3Rpb25fd2luZG93cyIsCisgICAgICAgICAgICAgICAgaW5jbHVkZV9zdHIhKCIuLi9taWdyYXRpb25zL1Y2Ml9fcGFnZV9pbmdlc3Rpb25fd2luZG93cy5zcWwiKSwKKyAgICAgICAgICAgICAgICAzMjk3OTA1MTIzNDc3MzQzNDAxX3U2NCwKKyAgICAgICAgICAgICksCisgICAgICAgICAgICAoCisgICAgICAgICAgICAgICAgODMsCisgICAgICAgICAgICAgICAgInNlc3Npb25zX2libV9ib2JfYWdlbnRfa2luZCIsCisgICAgICAgICAgICAgICAgaW5jbHVkZV9zdHIhKCIuLi9taWdyYXRpb25zL1Y4M19fc2Vzc2lvbnNfaWJtX2JvYl9hZ2VudF9raW5kLnNxbCIpLAorICAgICAgICAgICAgICAgIDExNjIxMDY3MjQ1NzAyMzAwNjE2X3U2NCwKKyAgICAgICAgICAgICksCisgICAgICAgIF07CisgICAgICAgIGxldCBtdXQgY29ubiA9IENvbm5lY3Rpb246Om9wZW5faW5fbWVtb3J5KCkudW53cmFwKCk7CisgICAgICAgIHJ1bigmbXV0IGNvbm4pLnVud3JhcCgpOworICAgICAgICBmb3IgKHZlcnNpb24sIG5hbWUsIHNxbCwgcmVwb3J0ZWQpIGluIHJlbGVhc2VkIHsKKyAgICAgICAgICAgIGFzc2VydCEoIXNxbC5jb250YWlucygiXHJcbiIpKTsKKyAgICAgICAgICAgIGxldCBjcmxmID0gc3FsLnJlcGxhY2UoJ1xuJywgIlxyXG4iKTsKKyAgICAgICAgICAgIGxldCBtaWdyYXRpb24gPQorICAgICAgICAgICAgICAgIHJlZmluZXJ5OjpNaWdyYXRpb246OnVuYXBwbGllZCgmZm9ybWF0ISgiVnt2ZXJzaW9ufV9fe25hbWV9IiksICZjcmxmKS51bndyYXAoKTsKKyAgICAgICAgICAgIGFzc2VydF9lcSEoCisgICAgICAgICAgICAgICAgbWlncmF0aW9uLmNoZWNrc3VtKCksCisgICAgICAgICAgICAgICAgcmVwb3J0ZWQsCisgICAgICAgICAgICAgICAgInJlbGVhc2VkIFdpbmRvd3MgY2hlY2tzdW0gbXVzdCBtYXRjaCBwdWJsaWMgcmVwb3J0IFZ7dmVyc2lvbn0iCisgICAgICAgICAgICApOworICAgICAgICAgICAgYXNzZXJ0X2VxIShjb25uLmV4ZWN1dGUoIlVQREFURSByZWZpbmVyeV9zY2hlbWFfaGlzdG9yeSBTRVQgY2hlY2tzdW0gPSA/MSBXSEVSRSB2ZXJzaW9uID0gPzIgQU5EIG5hbWUgPSA/MyIsIHBhcmFtcyFbcmVwb3J0ZWQudG9fc3RyaW5nKCksIHZlcnNpb24sIG5hbWVdKS51bndyYXAoKSwgMSk7CisgICAgICAgIH0KKyAgICAgICAgbGV0IHJlb3BlbmVkID0gcnVuKCZtdXQgY29ubik7CisgICAgICAgIGFzc2VydCEoCisgICAgICAgICAgICByZW9wZW5lZC5pc19vaygpLAorICAgICAgICAgICAgIldJTkRPV1NfQ1JMRl9ISVNUT1JZX1JFT1BFTl9SRUZVU0VEOiB7cmVvcGVuZWQ6P30iCisgICAgICAgICk7CisgICAgfQorCisgICAgZm4gc2V0X3JlbGVhc2VkX2NybGZfaGlzdG9yeShjb25uOiAmQ29ubmVjdGlvbikgeworICAgICAgICBmb3IgbWlncmF0aW9uIGluIG1pZ3JhdGlvbnM6OnJ1bm5lcigpLmdldF9taWdyYXRpb25zKCkgeworICAgICAgICAgICAgaWYgbWlncmF0aW9uLnZlcnNpb24oKSA+IDgzIHsKKyAgICAgICAgICAgICAgICBjb250aW51ZTsKKyAgICAgICAgICAgIH0KKyAgICAgICAgICAgIGxldCBjcmxmID0gbWlncmF0aW9uLnNxbCgpLnVud3JhcCgpLnJlcGxhY2UoJ1xuJywgIlxyXG4iKTsKKyAgICAgICAgICAgIGxldCBvbGQgPSByZWZpbmVyeTo6TWlncmF0aW9uOjp1bmFwcGxpZWQoJm1pZ3JhdGlvbi50b19zdHJpbmcoKSwgJmNybGYpLnVud3JhcCgpOworICAgICAgICAgICAgYXNzZXJ0X2VxIShjb25uLmV4ZWN1dGUoIlVQREFURSByZWZpbmVyeV9zY2hlbWFfaGlzdG9yeSBTRVQgY2hlY2tzdW0gPSA/MSBXSEVSRSB2ZXJzaW9uID0gPzIgQU5EIG5hbWUgPSA/MyIsIHBhcmFtcyFbb2xkLmNoZWNrc3VtKCkudG9fc3RyaW5nKCksIG1pZ3JhdGlvbi52ZXJzaW9uKCksIG1pZ3JhdGlvbi5uYW1lKCldKS51bndyYXAoKSwgMSk7CisgICAgICAgIH0KKyAgICB9CisKKyAgICAjW3Rlc3RdCisgICAgZm4gd2luZG93c19jcmxmX3JlcGFpcl9wcmVzZXJ2ZXNfc2NoZW1hX2RhdGFfYW5kX2lzX2lkZW1wb3RlbnQoKSB7CisgICAgICAgIGxldCBtdXQgY29ubiA9IENvbm5lY3Rpb246Om9wZW5faW5fbWVtb3J5KCkudW53cmFwKCk7CisgICAgICAgIHJ1bigmbXV0IGNvbm4pLnVud3JhcCgpOworICAgICAgICBjb25uLmV4ZWN1dGUoIklOU0VSVCBJTlRPIHdvcmtzcGFjZXMgKGlkLCBuYW1lLCBjcmVhdGVkX2F0KSBWQUxVRVMgKHplcm9ibG9iKDE2KSwgJ3ByZXNlcnZlZCB3b3Jrc3BhY2UnLCAxKSIsIFtdKS51bndyYXAoKTsKKyAgICAgICAgbGV0IGJlZm9yZTogVmVjPChTdHJpbmcsIFN0cmluZyk+ID0gY29ubgorICAgICAgICAgICAgLnByZXBhcmUoIlNFTEVDVCBuYW1lLCBjb2FsZXNjZShzcWwsICcnKSBGUk9NIHNxbGl0ZV9tYXN0ZXIgT1JERVIgQlkgbmFtZSIpCisgICAgICAgICAgICAudW53cmFwKCkKKyAgICAgICAgICAgIC5xdWVyeV9tYXAoW10sIHxyb3d8IE9rKChyb3cuZ2V0KDApPywgcm93LmdldCgxKT8pKSkKKyAgICAgICAgICAgIC51bndyYXAoKQorICAgICAgICAgICAgLmNvbGxlY3Q6OjxSZXN1bHQ8XywgXz4+KCkKKyAgICAgICAgICAgIC51bndyYXAoKTsKKyAgICAgICAgc2V0X3JlbGVhc2VkX2NybGZfaGlzdG9yeSgmY29ubik7CisgICAgICAgIHJ1bigmbXV0IGNvbm4pLnVud3JhcCgpOworICAgICAgICBydW4oJm11dCBjb25uKS51bndyYXAoKTsKKyAgICAgICAgbGV0IGFmdGVyOiBWZWM8KFN0cmluZywgU3RyaW5nKT4gPSBjb25uCisgICAgICAgICAgICAucHJlcGFyZSgiU0VMRUNUIG5hbWUsIGNvYWxlc2NlKHNxbCwgJycpIEZST00gc3FsaXRlX21hc3RlciBPUkRFUiBCWSBuYW1lIikKKyAgICAgICAgICAgIC51bndyYXAoKQorICAgICAgICAgICAgLnF1ZXJ5X21hcChbXSwgfHJvd3wgT2soKHJvdy5nZXQoMCk/LCByb3cuZ2V0KDEpPykpKQorICAgICAgICAgICAgLnVud3JhcCgpCisgICAgICAgICAgICAuY29sbGVjdDo6PFJlc3VsdDxfLCBfPj4oKQorICAgICAgICAgICAgLnVud3JhcCgpOworICAgICAgICBhc3NlcnRfZXEhKGJlZm9yZSwgYWZ0ZXIpOworICAgICAgICBhc3NlcnRfZXEhKAorICAgICAgICAgICAgY29ubi5xdWVyeV9yb3coCisgICAgICAgICAgICAgICAgIlNFTEVDVCBuYW1lIEZST00gd29ya3NwYWNlcyBXSEVSRSBpZCA9IHplcm9ibG9iKDE2KSIsCisgICAgICAgICAgICAgICAgW10sCisgICAgICAgICAgICAgICAgfHJvd3wgcm93LmdldDo6PF8sIFN0cmluZz4oMCkKKyAgICAgICAgICAgICkKKyAgICAgICAgICAgIC51bndyYXAoKSwKKyAgICAgICAgICAgICJwcmVzZXJ2ZWQgd29ya3NwYWNlIgorICAgICAgICApOworICAgICAgICBmb3IgbWlncmF0aW9uIGluIG1pZ3JhdGlvbnM6OnJ1bm5lcigpLmdldF9taWdyYXRpb25zKCkgeworICAgICAgICAgICAgbGV0IGNoZWNrc3VtOiBTdHJpbmcgPSBjb25uCisgICAgICAgICAgICAgICAgLnF1ZXJ5X3JvdygKKyAgICAgICAgICAgICAgICAgICAgIlNFTEVDVCBjaGVja3N1bSBGUk9NIHJlZmluZXJ5X3NjaGVtYV9oaXN0b3J5IFdIRVJFIHZlcnNpb24gPSA/MSIsCisgICAgICAgICAgICAgICAgICAgIFttaWdyYXRpb24udmVyc2lvbigpXSwKKyAgICAgICAgICAgICAgICAgICAgfHJvd3wgcm93LmdldCgwKSwKKyAgICAgICAgICAgICAgICApCisgICAgICAgICAgICAgICAgLnVud3JhcCgpOworICAgICAgICAgICAgYXNzZXJ0X2VxIShjaGVja3N1bSwgbWlncmF0aW9uLmNoZWNrc3VtKCkudG9fc3RyaW5nKCkpOworICAgICAgICB9CisgICAgfQorCisgICAgI1t0ZXN0XQorICAgIGZuIHdpbmRvd3NfY3JsZl9yZXBhaXJfcmVmdXNlc191bmtub3duX3NxbF9hbmRfd3JvbmdfbmFtZXMoKSB7CisgICAgICAgIGZvciB3cm9uZ19uYW1lIGluIFtmYWxzZSwgdHJ1ZV0geworICAgICAgICAgICAgbGV0IG11dCBjb25uID0gQ29ubmVjdGlvbjo6b3Blbl9pbl9tZW1vcnkoKS51bndyYXAoKTsKKyAgICAgICAgICAgIHJ1bigmbXV0IGNvbm4pLnVud3JhcCgpOworICAgICAgICAgICAgbGV0IHNxbCA9IGlmIHdyb25nX25hbWUgeworICAgICAgICAgICAgICAgICJVUERBVEUgcmVmaW5lcnlfc2NoZW1hX2hpc3RvcnkgU0VUIG5hbWUgPSAnZm9yZWlnbicsIGNoZWNrc3VtID0gJzE3Mjg1ODY4MzE0NDcwMTg0NDE3JyBXSEVSRSB2ZXJzaW9uID0gMSIKKyAgICAgICAgICAgIH0gZWxzZSB7CisgICAgICAgICAgICAgICAgIlVQREFURSByZWZpbmVyeV9zY2hlbWFfaGlzdG9yeSBTRVQgY2hlY2tzdW0gPSAnMCcgV0hFUkUgdmVyc2lvbiA9IDEiCisgICAgICAgICAgICB9OworICAgICAgICAgICAgY29ubi5leGVjdXRlKHNxbCwgW10pLnVud3JhcCgpOworICAgICAgICAgICAgbGV0IGJlZm9yZTogKFN0cmluZywgU3RyaW5nKSA9IGNvbm4KKyAgICAgICAgICAgICAgICAucXVlcnlfcm93KAorICAgICAgICAgICAgICAgICAgICAiU0VMRUNUIG5hbWUsIGNoZWNrc3VtIEZST00gcmVmaW5lcnlfc2NoZW1hX2hpc3RvcnkgV0hFUkUgdmVyc2lvbiA9IDEiLAorICAgICAgICAgICAgICAgICAgICBbXSwKKyAgICAgICAgICAgICAgICAgICAgfHJvd3wgT2soKHJvdy5nZXQoMCk/LCByb3cuZ2V0KDEpPykpLAorICAgICAgICAgICAgICAgICkKKyAgICAgICAgICAgICAgICAudW53cmFwKCk7CisgICAgICAgICAgICBhc3NlcnQhKHJ1bigmbXV0IGNvbm4pLmlzX2VycigpKTsKKyAgICAgICAgICAgIGxldCBhZnRlcjogKFN0cmluZywgU3RyaW5nKSA9IGNvbm4KKyAgICAgICAgICAgICAgICAucXVlcnlfcm93KAorICAgICAgICAgICAgICAgICAgICAiU0VMRUNUIG5hbWUsIGNoZWNrc3VtIEZST00gcmVmaW5lcnlfc2NoZW1hX2hpc3RvcnkgV0hFUkUgdmVyc2lvbiA9IDEiLAorICAgICAgICAgICAgICAgICAgICBbXSwKKyAgICAgICAgICAgICAgICAgICAgfHJvd3wgT2soKHJvdy5nZXQoMCk/LCByb3cuZ2V0KDEpPykpLAorICAgICAgICAgICAgICAgICkKKyAgICAgICAgICAgICAgICAudW53cmFwKCk7CisgICAgICAgICAgICBhc3NlcnRfZXEhKGJlZm9yZSwgYWZ0ZXIpOworICAgICAgICB9CisgICAgfQorCisgICAgI1t0ZXN0XQorICAgIGZuIHdpbmRvd3NfY3JsZl9yZXBhaXJfcm9sbHNfYmFja19oaXN0b3J5X29uX3dyaXRlX2ZhaWx1cmUoKSB7CisgICAgICAgIGxldCBtdXQgY29ubiA9IENvbm5lY3Rpb246Om9wZW5faW5fbWVtb3J5KCkudW53cmFwKCk7CisgICAgICAgIHJ1bigmbXV0IGNvbm4pLnVud3JhcCgpOworICAgICAgICBzZXRfcmVsZWFzZWRfY3JsZl9oaXN0b3J5KCZjb25uKTsKKyAgICAgICAgbGV0IGJlZm9yZTogU3RyaW5nID0gY29ubgorICAgICAgICAgICAgLnF1ZXJ5X3JvdygKKyAgICAgICAgICAgICAgICAiU0VMRUNUIGNoZWNrc3VtIEZST00gcmVmaW5lcnlfc2NoZW1hX2hpc3RvcnkgV0hFUkUgdmVyc2lvbiA9IDEiLAorICAgICAgICAgICAgICAgIFtdLAorICAgICAgICAgICAgICAgIHxyb3d8IHJvdy5nZXQoMCksCisgICAgICAgICAgICApCisgICAgICAgICAgICAudW53cmFwKCk7CisgICAgICAgIGNvbm4uZXhlY3V0ZV9iYXRjaCgiQ1JFQVRFIFRSSUdHRVIgcmVqZWN0X3NlY29uZF9yZXBhaXIgQkVGT1JFIFVQREFURSBPTiByZWZpbmVyeV9zY2hlbWFfaGlzdG9yeSBXSEVOIE5FVy52ZXJzaW9uID0gMiBCRUdJTiBTRUxFQ1QgUkFJU0UoQUJPUlQsICdpbmplY3RlZCBoaXN0b3J5IHdyaXRlIGZhaWx1cmUnKTsgRU5EOyIpLnVud3JhcCgpOworICAgICAgICBhc3NlcnQhKHJlcGFpcl93aW5kb3dzX2NybGZfY2hlY2tzdW1zKCZjb25uKS5pc19lcnIoKSk7CisgICAgICAgIGxldCBhZnRlcjogU3RyaW5nID0gY29ubgorICAgICAgICAgICAgLnF1ZXJ5X3JvdygKKyAgICAgICAgICAgICAgICAiU0VMRUNUIGNoZWNrc3VtIEZST00gcmVmaW5lcnlfc2NoZW1hX2hpc3RvcnkgV0hFUkUgdmVyc2lvbiA9IDEiLAorICAgICAgICAgICAgICAgIFtdLAorICAgICAgICAgICAgICAgIHxyb3d8IHJvdy5nZXQoMCksCisgICAgICAgICAgICApCisgICAgICAgICAgICAudW53cmFwKCk7CisgICAgICAgIGFzc2VydF9lcSEoYmVmb3JlLCBhZnRlcik7CisgICAgICAgIGNvbm4uZXhlY3V0ZV9iYXRjaCgiRFJPUCBUUklHR0VSIHJlamVjdF9zZWNvbmRfcmVwYWlyOyIpCisgICAgICAgICAgICAudW53cmFwKCk7CisgICAgICAgIHJ1bigmbXV0IGNvbm4pLnVud3JhcCgpOworICAgIH0KKworICAgICNbdGVzdF0KKyAgICBmbiB3aW5kb3dzX2NybGZfcmVwYWlyX3ByZXNlcnZlc19hX3NjaGVtYV9jcmVhdGVkX2Zyb21fY3JsZl9zcWwoKSB7CisgICAgICAgIGxldCBjcmxmX21pZ3JhdGlvbnM6IFZlYzxfPiA9IG1pZ3JhdGlvbnM6OnJ1bm5lcigpCisgICAgICAgICAgICAuZ2V0X21pZ3JhdGlvbnMoKQorICAgICAgICAgICAgLml0ZXIoKQorICAgICAgICAgICAgLmZpbHRlcih8bWlncmF0aW9ufCBtaWdyYXRpb24udmVyc2lvbigpIDw9IDgzKQorICAgICAgICAgICAgLm1hcCh8bWlncmF0aW9ufCB7CisgICAgICAgICAgICAgICAgcmVmaW5lcnk6Ok1pZ3JhdGlvbjo6dW5hcHBsaWVkKAorICAgICAgICAgICAgICAgICAgICAmbWlncmF0aW9uLnRvX3N0cmluZygpLAorICAgICAgICAgICAgICAgICAgICAmbWlncmF0aW9uLnNxbCgpLnVud3JhcCgpLnJlcGxhY2UoJ1xuJywgIlxyXG4iKSwKKyAgICAgICAgICAgICAgICApCisgICAgICAgICAgICAgICAgLnVud3JhcCgpCisgICAgICAgICAgICB9KQorICAgICAgICAgICAgLmNvbGxlY3QoKTsKKyAgICAgICAgbGV0IG11dCBjb25uID0gQ29ubmVjdGlvbjo6b3Blbl9pbl9tZW1vcnkoKS51bndyYXAoKTsKKyAgICAgICAgcmVmaW5lcnk6OlJ1bm5lcjo6bmV3KCZjcmxmX21pZ3JhdGlvbnMpCisgICAgICAgICAgICAucnVuKCZtdXQgY29ubikKKyAgICAgICAgICAgIC51bndyYXAoKTsKKyAgICAgICAgY29ubi5leGVjdXRlKCJJTlNFUlQgSU5UTyB3b3Jrc3BhY2VzIChpZCwgbmFtZSwgY3JlYXRlZF9hdCkgVkFMVUVTICh6ZXJvYmxvYigxNiksICdXaW5kb3dzLWNyZWF0ZWQgd29ya3NwYWNlJywgMSkiLCBbXSkudW53cmFwKCk7CisgICAgICAgIGxldCBiZWZvcmU6IFZlYzwoU3RyaW5nLCBTdHJpbmcpPiA9IGNvbm4KKyAgICAgICAgICAgIC5wcmVwYXJlKCJTRUxFQ1QgbmFtZSwgY29hbGVzY2Uoc3FsLCAnJykgRlJPTSBzcWxpdGVfbWFzdGVyIE9SREVSIEJZIG5hbWUiKQorICAgICAgICAgICAgLnVud3JhcCgpCisgICAgICAgICAgICAucXVlcnlfbWFwKFtdLCB8cm93fCBPaygocm93LmdldCgwKT8sIHJvdy5nZXQoMSk/KSkpCisgICAgICAgICAgICAudW53cmFwKCkKKyAgICAgICAgICAgIC5jb2xsZWN0Ojo8UmVzdWx0PF8sIF8+PigpCisgICAgICAgICAgICAudW53cmFwKCk7CisgICAgICAgIHJ1bigmbXV0IGNvbm4pLnVud3JhcCgpOworICAgICAgICBydW4oJm11dCBjb25uKS51bndyYXAoKTsKKyAgICAgICAgbGV0IGFmdGVyOiBWZWM8KFN0cmluZywgU3RyaW5nKT4gPSBjb25uCisgICAgICAgICAgICAucHJlcGFyZSgiU0VMRUNUIG5hbWUsIGNvYWxlc2NlKHNxbCwgJycpIEZST00gc3FsaXRlX21hc3RlciBPUkRFUiBCWSBuYW1lIikKKyAgICAgICAgICAgIC51bndyYXAoKQorICAgICAgICAgICAgLnF1ZXJ5X21hcChbXSwgfHJvd3wgT2soKHJvdy5nZXQoMCk/LCByb3cuZ2V0KDEpPykpKQorICAgICAgICAgICAgLnVud3JhcCgpCisgICAgICAgICAgICAuY29sbGVjdDo6PFJlc3VsdDxfLCBfPj4oKQorICAgICAgICAgICAgLnVud3JhcCgpOworICAgICAgICBhc3NlcnRfZXEhKAorICAgICAgICAgICAgYmVmb3JlLCBhZnRlciwKKyAgICAgICAgICAgICJ0aGUgcmVwYWlyIG11c3Qgbm90IHJlLWV4ZWN1dGUgTEYgU1FMIG92ZXIgdGhlIFdpbmRvd3MtY3JlYXRlZCBzY2hlbWEiCisgICAgICAgICk7CisgICAgICAgIGFzc2VydF9lcSEoCisgICAgICAgICAgICBjb25uLnF1ZXJ5X3JvdygKKyAgICAgICAgICAgICAgICAiU0VMRUNUIG5hbWUgRlJPTSB3b3Jrc3BhY2VzIFdIRVJFIGlkID0gemVyb2Jsb2IoMTYpIiwKKyAgICAgICAgICAgICAgICBbXSwKKyAgICAgICAgICAgICAgICB8cm93fCByb3cuZ2V0Ojo8XywgU3RyaW5nPigwKQorICAgICAgICAgICAgKQorICAgICAgICAgICAgLnVud3JhcCgpLAorICAgICAgICAgICAgIldpbmRvd3MtY3JlYXRlZCB3b3Jrc3BhY2UiCisgICAgICAgICk7CisgICAgICAgIGFzc2VydF9lcSEoCisgICAgICAgICAgICBjb25uLnF1ZXJ5X3JvdygiUFJBR01BIGludGVncml0eV9jaGVjayIsIFtdLCB8cm93fCByb3cuZ2V0Ojo8XywgU3RyaW5nPigwKSkKKyAgICAgICAgICAgICAgICAudW53cmFwKCksCisgICAgICAgICAgICAib2siCisgICAgICAgICk7CisgICAgfQogfQo='');assert
+        hashlib.sha256(raw).hexdigest()==M[''patch_sha256'']
+
+        f=pathlib.Path(os.environ[''RUNNER_TEMP''])/''candidate.patch'';f.write_bytes(raw)
+
+        assert [x.split(''\t'',2)[2] for x in subprocess.check_output([''git'',''apply'',''--numstat'',str(f)],text=True).splitlines()]==M[''paths'']
+
+        subprocess.run([''git'',''apply'',''--check'',str(f)],check=True);subprocess.run([''git'',''apply'',str(f)],check=True)
+
+        for name,h in M[''files''].items(): assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()==h
+
+        '
+    - name: Strict native migration regressions
+      shell: bash
+      run: "set -euo pipefail\ncargo test --locked -p ai-memory-store --lib migrations::tests::\
+        \ -- --nocapture 2>&1 | tee \"$RUNNER_TEMP/migrations.log\"\npython - <<'CHECK'\n\
+        import pathlib,os,re\ns=pathlib.Path(os.environ[\"RUNNER_TEMP\"],\"migrations.log\"\
+        ).read_text()\nfor name in [\"review_windows_crlf_history_opens_without_weakening_divergence\"\
+        ,\"windows_crlf_repair_preserves_schema_data_and_is_idempotent\",\"windows_crlf_repair_refuses_unknown_sql_and_wrong_names\"\
+        ,\"windows_crlf_repair_rolls_back_history_on_write_failure\",\"windows_crlf_repair_preserves_a_schema_created_from_crlf_sql\"\
+        ,\"only_the_original_v62_checksum_is_repaired\"]:\n assert re.search(r\"test\
+        \ migrations::tests::\"+name+r\" \\.\\.\\. ok\",s),name\nassert \"0 failed;\
+        \ 0 ignored;\" in s\nCHECK"
+    - name: Required formatting
+      shell: bash
+      run: 'cargo fmt --all -- --check
+
+        git diff --check'
+    - name: Required full workspace clippy
+      if: runner.os == 'Linux'
+      shell: bash
+      run: 'set -euo pipefail
+
+        cargo clippy --locked --workspace --all-targets -- -D warnings 2>&1 | tee
+        "$RUNNER_TEMP/clippy.log"'
+    - name: Full native workspace required tests
+      shell: bash
+      run: 'set -euo pipefail
+
+        cargo test --locked --workspace --all-targets 2>&1 | tee "$RUNNER_TEMP/workspace.log"'
+    - name: Workspace doctests
+      if: runner.os == 'Linux'
+      shell: bash
+      run: 'set -euo pipefail
+
+        cargo test --locked --workspace --doc 2>&1 | tee "$RUNNER_TEMP/doctests.log"'
+    - name: Dependency policy
+      if: runner.os == 'Linux'
+      uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25
+      with:
+        log-level: warn
+        command: check
+        arguments: --all-features
+    - name: Final exact candidate identity
+      if: always()
+      shell: python
+      run: 'import pathlib,hashlib,subprocess
+
+        M={''base'': ''5519b89cc653bec4cfccbb770c6b4e5dcfcda759'', ''patch_sha256'':
+        ''5bd463517f68ab947a1f58875dd7fd1478092ec7f80eedacc612197c39232486'', ''paths'':
+        [''CHANGELOG.md'', ''crates/ai-memory-store/src/migrations.rs''], ''baseline_run'':
+        ''https://github.com/rudycelekli/ai-memory/actions/runs/39540810795'', ''baseline'':
+        ''Actual Rust/refinery3publicchecksumcontrols passed before expected DivergentVersion
+        reopen failure'', ''state'': ''PRIVATE_CANDIDATE_NOT_QUALIFIED'', ''files'':
+        {''CHANGELOG.md'': ''1bf195e0a27e840cbd7bb5bb725c7aa4d4f17e9bbdbc9caf7677e7221ffe3f67'',
+        ''crates/ai-memory-store/src/migrations.rs'': ''269388728e994c049fdf1e543553092309f03f8e829783b868d11f53dc28a244''},
+        ''local_format_tool'': ''rustfmt1.8.0-stable01f6ddf7582026-02-11; hostedRust1.95
+        fmt gate pending'', ''independent_review'': ''accepted_new_lane found no code
+        blocker; added requested actual CRLF-SQL-created database/schema/data/integrity/idempotency
+        regression''}
+
+        for name,h in M[''files''].items(): assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()==h
+
+        assert subprocess.check_output([''git'',''diff'',''--name-only''],text=True).splitlines()==M[''paths'']
+
+        assert subprocess.check_output([''git'',''diff'',''--cached'',''--name-only''])==b''''
+
+        '
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: always()
+      with:
+        name: migration1499-${{ matrix.os }}-${{ github.run_id }}
+        path: '${{ runner.temp }}/*.log
+
+          ${{ runner.temp }}/candidate.patch'
+        if-no-files-found: error
